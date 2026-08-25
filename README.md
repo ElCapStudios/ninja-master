@@ -27,8 +27,8 @@ Tapping anywhere on the game also makes you jump.
 
 ## Rules
 
-- You have 3 hearts.
-- Spikes and lava take a heart straight away and send you back to the start of the level.
+- You have 5 hearts.
+- Spikes and lava take a heart. You come back at the last safe spot, not at the start.
 - Zombies and skeletons take a heart if they touch you.
 - Jump on top of an enemy to squash it.
 - A ninja star kills a zombie in 1 hit and a skeleton in 2 hits.
@@ -56,7 +56,12 @@ Rules for editing:
 
 1. Every row in a level must have the same number of letters.
 2. Each level needs exactly one `P` and one `F`.
-3. Save the file and refresh the page in the browser.
+3. Make lava and holes 3 tiles wide or less. One jump goes about 4 tiles.
+4. Keep spikes and enemies 3 tiles away from the edge of a hole. If not,
+   you land on them at the end of a jump.
+5. Do not put a platform right above spikes or an enemy. You bump your head
+   on the platform and drop back onto the danger.
+6. Save the file and refresh the page in the browser.
 
 ## Run it on your own computer
 

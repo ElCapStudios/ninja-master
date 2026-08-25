@@ -7,7 +7,7 @@
   'use strict';
 
   var TILE = 16;
-  var VIEW_W = 480;
+  var VIEW_W = 384;
   var VIEW_H = 272;
   var STEP = 1000 / 60;
 
@@ -195,12 +195,14 @@
     mode: 'title',
     level: 0,
     score: 0,
-    hearts: 3,
+    hearts: 5,
     timer: 0,
     shake: 0,
     frame: 0,
     best: 0
   };
+
+  var MAX_HEARTS = 5;
 
   try { game.best = parseInt(localStorage.getItem('ninjaMasterBest') || '0', 10) || 0; } catch (e) { game.best = 0; }
 
@@ -213,6 +215,7 @@
   var particles = [];
   var flag = null;
   var spawn = { x: 40, y: 40 };
+  var safeSpot = { x: 40, y: 40 };
   var cam = { x: 0 };
   var backdrop = { stars: [], hillFar: [], hillNear: [] };
 
@@ -290,6 +293,24 @@
       jumpsLeft: 2, coyote: 0, invuln: 0,
       throwCd: 0, animT: 0, dying: false
     };
+    safeSpot.x = spawn.x;
+    safeSpot.y = spawn.y;
+  }
+
+  /* After losing a heart the ninja comes back at the last safe piece of
+     ground, not at the very start of the level. */
+  function respawnAtSafeSpot() {
+    player.x = safeSpot.x;
+    player.y = safeSpot.y;
+    player.vx = 0;
+    player.vy = 0;
+    player.jumpsLeft = 2;
+    player.coyote = 0;
+    player.invuln = 90;
+    player.dying = false;
+    bones = [];
+    shurikens = [];
+    burst(player.x + 5, player.y + 7, '#8fa7ff', 12, 3);
   }
 
   function makeEnemy(kind, cx, cy) {
@@ -471,7 +492,7 @@
       if (consumeConfirm()) {
         game.level = 0;
         game.score = 0;
-        game.hearts = 3;
+        game.hearts = MAX_HEARTS;
         loadLevel(0);
         game.mode = 'play';
         game.timer = 0;
@@ -483,8 +504,13 @@
     if (game.mode === 'dead') {
       updateParticles();
       if (game.timer > 55) {
-        if (game.hearts <= 0) { gameOver(); }
-        else { loadLevel(game.level); game.mode = 'play'; game.timer = 0; }
+        if (game.hearts <= 0) {
+          gameOver();
+        } else {
+          respawnAtSafeSpot();
+          game.mode = 'play';
+          game.timer = 0;
+        }
       }
       throwEdge = false;
       confirmEdge = false;
@@ -514,7 +540,7 @@
       updateParticles();
       saveBest();
       if (game.timer > 40 && consumeConfirm()) {
-        game.hearts = 3;
+        game.hearts = MAX_HEARTS;
         loadLevel(game.level);
         game.mode = 'play';
         game.timer = 0;
@@ -600,6 +626,15 @@
 
     if (p.y > level.pxH + 8) { killPlayer(); return; }
     if (touchesHazard(p)) { killPlayer(); return; }
+
+    if (p.onGround && p.invuln <= 0) {
+      var safe = true;
+      for (var s = 0; s < enemies.length; s++) {
+        var en = enemies[s];
+        if (en.alive && Math.abs(en.x - p.x) < 30 && Math.abs(en.y - p.y) < 24) { safe = false; break; }
+      }
+      if (safe) { safeSpot.x = p.x; safeSpot.y = p.y; }
+    }
 
     for (var i = 0; i < enemies.length; i++) {
       var e = enemies[i];
@@ -764,7 +799,7 @@
     ctx.globalAlpha = 1;
 
     ctx.fillStyle = 'rgba(255,247,214,0.9)';
-    var mx = 380 - cam.x * 0.05;
+    var mx = VIEW_W - 90 - cam.x * 0.05;
     ctx.beginPath();
     ctx.arc(mx, 48, 20, 0, Math.PI * 2);
     ctx.fill();
@@ -839,16 +874,22 @@
           ctx.fillStyle = '#5a6478';
           ctx.fillRect(x, y + TILE - 2, TILE, 2);
         } else if (ch === '~') {
-          var wob = Math.sin((game.frame * 0.06) + cx * 0.7) * 1.6;
-          ctx.fillStyle = '#c8280d';
+          var surface = tileAt(cx, cy - 1) !== '~';
+          var wob = Math.sin((game.frame * 0.06) + cx * 0.7) * 1.5;
+          ctx.fillStyle = '#3a1410';
           ctx.fillRect(x, y, TILE, TILE);
+          var top = surface ? y + 6 + wob : y;
+          ctx.fillStyle = '#c8280d';
+          ctx.fillRect(x, top, TILE, y + TILE - top);
           ctx.fillStyle = '#ff6a00';
-          ctx.fillRect(x, y + 3 + wob, TILE, TILE - 3 - wob);
-          ctx.fillStyle = '#ffc33f';
-          ctx.fillRect(x, y + 3 + wob, TILE, 2);
-          if ((cx + Math.floor(game.frame / 24)) % 5 === 0) {
-            ctx.fillStyle = 'rgba(255,240,180,0.8)';
-            ctx.fillRect(x + 6, y + 1 + wob, 2, 2);
+          ctx.fillRect(x, top + 2, TILE, y + TILE - top - 2);
+          if (surface) {
+            ctx.fillStyle = '#ffc33f';
+            ctx.fillRect(x, top, TILE, 2);
+            if ((cx + Math.floor(game.frame / 24)) % 5 === 0) {
+              ctx.fillStyle = 'rgba(255,240,180,0.85)';
+              ctx.fillRect(x + 6, top - 3, 2, 2);
+            }
           }
         }
       }
@@ -891,124 +932,120 @@
     ctx.fillRect(x + 11, y + 7, 3, 3);
   }
 
+  /* Draws a list of [x, y, w, h, colour] rectangles with a dark outline
+     around the whole shape, so sprites stand out against the background. */
+  function drawSprite(parts) {
+    var i, p;
+    ctx.fillStyle = '#05060d';
+    for (i = 0; i < parts.length; i++) {
+      p = parts[i];
+      ctx.fillRect(p[0] - 1, p[1] - 1, p[2] + 2, p[3] + 2);
+    }
+    for (i = 0; i < parts.length; i++) {
+      p = parts[i];
+      ctx.fillStyle = p[4];
+      ctx.fillRect(p[0], p[1], p[2], p[3]);
+    }
+  }
+
   function drawNinja(p) {
     if (p.invuln > 0 && Math.floor(game.frame / 4) % 2 === 0) { return; }
     var dx = Math.round(p.x) - 1;
     var dy = Math.round(p.y) - 1;
     var f = p.facing;
     var running = p.onGround && Math.abs(p.vx) > 0.3;
-    var swing = running ? Math.sin(p.animT * 0.35) * 2.4 : 0;
+    var swing = running ? Math.round(Math.sin(p.animT * 0.35) * 2.4) : 0;
     var airborne = !p.onGround;
+    var tail = Math.round(Math.sin(game.frame * 0.25) * 1.5);
 
-    // trailing scarf
-    ctx.fillStyle = '#c0392b';
-    var tailWave = Math.sin(game.frame * 0.25) * 1.5;
-    var tx = f > 0 ? dx - 1 : dx + 9;
-    ctx.fillRect(tx, dy + 4 + tailWave, 4, 2);
-    ctx.fillRect(tx - f * 2, dy + 6 + tailWave, 3, 1);
+    var SUIT = '#3b4570';
+    var SUIT_DARK = '#2a3155';
+    var SKIN = '#4f5c8c';
+    var RED = '#e8483a';
+    var parts = [];
+
+    // scarf trailing behind
+    parts.push([f > 0 ? dx - 3 : dx + 9, dy + 4 + tail, 5, 2, RED]);
+    parts.push([f > 0 ? dx - 5 : dx + 13, dy + 6 + tail, 3, 2, '#b8352a']);
 
     // legs
-    ctx.fillStyle = '#1b1e2e';
     if (airborne) {
-      ctx.fillRect(dx + 3, dy + 12, 3, 3);
-      ctx.fillRect(dx + 7, dy + 11, 3, 4);
+      parts.push([dx + 3, dy + 12, 3, 3, SUIT_DARK]);
+      parts.push([dx + 7, dy + 11, 3, 4, SUIT_DARK]);
     } else {
-      ctx.fillRect(dx + 3 + swing, dy + 12, 3, 4);
-      ctx.fillRect(dx + 7 - swing, dy + 12, 3, 4);
+      parts.push([dx + 3 + swing, dy + 12, 3, 4, SUIT_DARK]);
+      parts.push([dx + 7 - swing, dy + 12, 3, 4, SUIT_DARK]);
     }
 
-    // body
-    ctx.fillStyle = '#262b40';
-    ctx.fillRect(dx + 2, dy + 6, 8, 6);
-    ctx.fillStyle = '#c0392b';
-    ctx.fillRect(dx + 2, dy + 10, 8, 1);
+    // body and belt
+    parts.push([dx + 2, dy + 6, 8, 6, SUIT]);
+    parts.push([dx + 2, dy + 10, 8, 1, RED]);
 
     // arms
-    ctx.fillStyle = '#1b1e2e';
     if (p.throwCd > 8) {
-      ctx.fillRect(f > 0 ? dx + 9 : dx - 1, dy + 6, 4, 2);
+      parts.push([f > 0 ? dx + 9 : dx - 2, dy + 6, 4, 2, SUIT_DARK]);
     } else {
-      ctx.fillRect(dx + 1 - (running ? swing * 0.4 : 0), dy + 7, 2, 4);
-      ctx.fillRect(dx + 9 + (running ? swing * 0.4 : 0), dy + 7, 2, 4);
+      parts.push([dx + 1 - (running ? Math.round(swing * 0.5) : 0), dy + 7, 2, 4, SUIT_DARK]);
+      parts.push([dx + 9 + (running ? Math.round(swing * 0.5) : 0), dy + 7, 2, 4, SUIT_DARK]);
     }
 
-    // head
-    ctx.fillStyle = '#2f3550';
-    ctx.fillRect(dx + 2, dy + 1, 8, 5);
-    // headband
-    ctx.fillStyle = '#e04b3c';
-    ctx.fillRect(dx + 1, dy + 2, 10, 2);
-    // eyes
-    ctx.fillStyle = '#ffffff';
+    // head, headband, eyes
+    parts.push([dx + 2, dy + 1, 8, 5, SKIN]);
+    parts.push([dx + 1, dy + 2, 10, 2, RED]);
     if (f > 0) {
-      ctx.fillRect(dx + 5, dy + 4, 2, 1);
-      ctx.fillRect(dx + 8, dy + 4, 2, 1);
+      parts.push([dx + 5, dy + 4, 2, 1, '#ffffff']);
+      parts.push([dx + 8, dy + 4, 2, 1, '#ffffff']);
     } else {
-      ctx.fillRect(dx + 2, dy + 4, 2, 1);
-      ctx.fillRect(dx + 5, dy + 4, 2, 1);
+      parts.push([dx + 2, dy + 4, 2, 1, '#ffffff']);
+      parts.push([dx + 5, dy + 4, 2, 1, '#ffffff']);
     }
+
+    drawSprite(parts);
   }
 
   function drawZombie(e) {
     var dx = Math.round(e.x) - 1, dy = Math.round(e.y) - 1;
     var f = e.dir;
-    var swing = Math.sin(e.animT * 0.12) * 2;
+    var swing = Math.round(Math.sin(e.animT * 0.12) * 2);
     var flash = e.hurt > 0 && Math.floor(e.hurt / 2) % 2 === 0;
+    var skin = flash ? '#ffffff' : '#7fd05f';
+    var shirt = flash ? '#ffffff' : '#4d8f3f';
+    var dark = flash ? '#dddddd' : '#2f5a2a';
 
-    ctx.fillStyle = flash ? '#ffffff' : '#2f5a2a';
-    ctx.fillRect(dx + 3 + swing * 0.4, dy + 12, 3, 4);
-    ctx.fillRect(dx + 8 - swing * 0.4, dy + 12, 3, 4);
-
-    ctx.fillStyle = flash ? '#ffffff' : '#4d8f3f';
-    ctx.fillRect(dx + 2, dy + 6, 10, 6);
-    ctx.fillStyle = flash ? '#ffffff' : '#3a6f30';
-    ctx.fillRect(dx + 2, dy + 9, 10, 1);
-
-    ctx.fillStyle = flash ? '#ffffff' : '#6fbf5a';
-    ctx.fillRect(f > 0 ? dx + 11 : dx - 3, dy + 6 + swing * 0.5, 5, 2);
-
-    ctx.fillStyle = flash ? '#ffffff' : '#6fbf5a';
-    ctx.fillRect(dx + 3, dy + 1, 8, 5);
-    ctx.fillStyle = flash ? '#888888' : '#1f3d1a';
-    ctx.fillRect(dx + 4, dy + 3, 2, 2);
-    ctx.fillRect(dx + 8, dy + 3, 2, 2);
-    ctx.fillStyle = flash ? '#ffffff' : '#3a6f30';
-    ctx.fillRect(dx + 4, dy + 6, 6, 1);
+    drawSprite([
+      [dx + 3 + swing, dy + 12, 3, 4, dark],
+      [dx + 8 - swing, dy + 12, 3, 4, dark],
+      [f > 0 ? dx + 11 : dx - 4, dy + 6 + Math.round(swing * 0.5), 5, 2, skin],
+      [dx + 2, dy + 6, 10, 6, shirt],
+      [dx + 2, dy + 9, 10, 1, dark],
+      [dx + 3, dy + 1, 8, 5, skin],
+      [dx + 4, dy + 3, 2, 2, flash ? '#888888' : '#1f3d1a'],
+      [dx + 8, dy + 3, 2, 2, flash ? '#888888' : '#1f3d1a'],
+      [dx + 4, dy + 6, 6, 1, dark]
+    ]);
   }
 
   function drawSkeleton(e) {
     var dx = Math.round(e.x) - 1, dy = Math.round(e.y) - 1;
     var f = e.dir;
-    var swing = Math.sin(e.animT * 0.2) * 2;
+    var swing = Math.round(Math.sin(e.animT * 0.2) * 2);
     var flash = e.hurt > 0 && Math.floor(e.hurt / 2) % 2 === 0;
-    var bone = flash ? '#ff9a9a' : '#e8e6dd';
+    var bone = flash ? '#ff9a9a' : '#f2f0e6';
     var dark = flash ? '#cc6666' : '#a9a69a';
 
-    ctx.fillStyle = bone;
-    ctx.fillRect(dx + 4 + swing * 0.4, dy + 12, 2, 4);
-    ctx.fillRect(dx + 8 - swing * 0.4, dy + 12, 2, 4);
-
-    ctx.fillStyle = dark;
-    ctx.fillRect(dx + 6, dy + 6, 2, 6);
-    ctx.fillStyle = bone;
-    ctx.fillRect(dx + 3, dy + 7, 8, 1);
-    ctx.fillRect(dx + 3, dy + 9, 8, 1);
-    ctx.fillRect(dx + 4, dy + 11, 6, 1);
-
-    ctx.fillStyle = bone;
-    if (e.cd > 95) {
-      ctx.fillRect(f > 0 ? dx + 10 : dx - 2, dy + 3, 4, 2);
-    } else {
-      ctx.fillRect(f > 0 ? dx + 10 : dx - 2, dy + 7, 4, 2);
-    }
-
-    ctx.fillStyle = bone;
-    ctx.fillRect(dx + 3, dy + 1, 8, 5);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(dx + 4, dy + 2, 2, 2);
-    ctx.fillRect(dx + 8, dy + 2, 2, 2);
-    ctx.fillStyle = dark;
-    ctx.fillRect(dx + 5, dy + 5, 4, 1);
+    drawSprite([
+      [dx + 4 + swing, dy + 12, 2, 4, bone],
+      [dx + 8 - swing, dy + 12, 2, 4, bone],
+      [dx + 6, dy + 6, 2, 6, dark],
+      [dx + 3, dy + 7, 8, 1, bone],
+      [dx + 3, dy + 9, 8, 1, bone],
+      [dx + 4, dy + 11, 6, 1, bone],
+      [f > 0 ? dx + 10 : dx - 2, e.cd > 95 ? dy + 3 : dy + 7, 4, 2, bone],
+      [dx + 3, dy + 1, 8, 5, bone],
+      [dx + 4, dy + 2, 2, 2, '#1a1a1a'],
+      [dx + 8, dy + 2, 2, 2, '#1a1a1a'],
+      [dx + 5, dy + 5, 4, 1, dark]
+    ]);
   }
 
   function drawShurikens() {
@@ -1064,15 +1101,15 @@
   }
 
   function drawHUD() {
-    for (var i = 0; i < 3; i++) {
-      drawHeart(8 + i * 14, 8, i < game.hearts);
+    for (var i = 0; i < MAX_HEARTS; i++) {
+      drawHeart(8 + i * 13, 8, i < game.hearts);
     }
     ctx.fillStyle = '#ffd93d';
-    ctx.fillRect(VIEW_W - 74, 9, 6, 8);
+    ctx.fillRect(9, 22, 6, 8);
     ctx.fillStyle = '#fff5b0';
-    ctx.fillRect(VIEW_W - 73, 10, 2, 3);
-    text(String(game.score), VIEW_W - 62, 13, 12, '#ffffff', 'left');
-    text('LEVEL ' + (game.level + 1) + ' - ' + level.name, VIEW_W / 2, 13, 11, 'rgba(255,255,255,0.85)');
+    ctx.fillRect(10, 23, 2, 3);
+    text(String(game.score), 21, 26, 12, '#ffffff', 'left');
+    text('LEVEL ' + (game.level + 1) + ' - ' + level.name, VIEW_W / 2, 13, 10, 'rgba(255,255,255,0.75)');
   }
 
   function panel(alpha) {
@@ -1085,21 +1122,21 @@
     panel(0.35);
 
     var bob = Math.sin(game.frame * 0.05) * 3;
-    text('NINJA MASTER', VIEW_W / 2, 62 + bob, 40, '#e04b3c');
+    text('NINJA MASTER', VIEW_W / 2, 58 + bob, 34, '#e8483a');
 
-    drawNinjaBig(VIEW_W / 2 - 24, 104 + bob * 0.5, 3);
+    drawNinjaBig(VIEW_W / 2 - 18, 96 + bob * 0.5, 3);
 
-    text('KEYBOARD:  ARROWS or A D to move    SPACE to jump    X to throw a star',
-      VIEW_W / 2, 186, 11, 'rgba(255,255,255,0.8)');
-    text('TOUCH:  use the round buttons on the screen',
-      VIEW_W / 2, 202, 11, 'rgba(255,255,255,0.8)');
-    text('Jump twice in the air for a DOUBLE JUMP', VIEW_W / 2, 218, 11, '#ffd93d');
+    text('KEYBOARD', VIEW_W / 2, 168, 11, '#ffd93d');
+    text('ARROWS or A D to move    SPACE to jump', VIEW_W / 2, 182, 10, 'rgba(255,255,255,0.85)');
+    text('X to throw a ninja star', VIEW_W / 2, 194, 10, 'rgba(255,255,255,0.85)');
+    text('PHONE or TABLET:  use the round buttons', VIEW_W / 2, 212, 10, 'rgba(255,255,255,0.85)');
+    text('Jump again in the air for a DOUBLE JUMP', VIEW_W / 2, 228, 10, '#ffd93d');
 
     if (Math.floor(game.frame / 30) % 2 === 0) {
-      text('PRESS SPACE  or  TAP THE SCREEN  TO START', VIEW_W / 2, 244, 13, '#ffffff');
+      text('PRESS SPACE  or  TAP TO START', VIEW_W / 2, 250, 13, '#ffffff');
     }
     if (game.best > 0) {
-      text('BEST SCORE: ' + game.best, VIEW_W - 10, 262, 10, 'rgba(255,255,255,0.6)', 'right');
+      text('BEST: ' + game.best, VIEW_W - 8, 265, 9, 'rgba(255,255,255,0.6)', 'right');
     }
   }
 
@@ -1196,6 +1233,19 @@
     if (acc > STEP * 5) { acc = 0; }
     render();
   }
+
+  /* A little door into the game, handy for testing and for tinkering.
+     Open the browser console and try:  NINJA.game.score = 100  */
+  window.NINJA = {
+    game: game,
+    input: input,
+    get player() { return player; },
+    get level() { return level; },
+    get enemies() { return enemies; },
+    get flag() { return flag; },
+    jump: function () { jumpBuffer = 8; confirmEdge = true; },
+    attack: function () { throwEdge = true; }
+  };
 
   loadLevel(0);
   game.mode = 'title';
