@@ -8,32 +8,77 @@ A platform game you can play in any web browser: phone, tablet, laptop.
 
 You are a ninja. Get to the red flag at the end of each level.
 
-Watch out for spikes, lava, zombies and skeletons.
-
-There are 7 levels. The last one is a boss fight with the Skull King.
+There are **5 worlds**. Each world has **5 levels**. That is **25 levels**.
+The last level in each world is a **boss fight**.
 
 ### Keyboard
 
 | Key | What it does |
 | --- | --- |
-| Arrow Left / Right, or A / D | Move |
-| Space, Up arrow, or W | Jump (press again in the air for a double jump) |
-| X, J, or Shift | Throw a ninja star |
+| Arrow Left / Right, or A / D | Move. In a menu it moves the yellow box |
+| Space, Up arrow, or W | Jump. In a menu it picks the thing |
+| X, J, or Shift | Throw a ninja star. In a menu it goes back |
+| Escape | Go back |
 
 ### Touch screen
 
 Big round buttons appear on the screen. Left and right on one side, JUMP and
 STAR on the other side.
 
-Tapping anywhere on the game also makes you jump.
+In a menu you can just **tap the box you want**.
+
+While you play, tapping anywhere on the game makes you jump.
+
+## The worlds
+
+| # | World | Enemies | Boss |
+| --- | --- | --- | --- |
+| 1 | Green Woods | Zombie, Skeleton | Skull King |
+| 2 | Frost Peak | Snowman, Bat | Frost Giant |
+| 3 | Sand Tomb | Mummy, Scorpion | Mummy Lord |
+| 4 | Fire Keep | Imp, Lava Blob | Fire Dragon |
+| 5 | Shadow Fort | Shadow Ninja, Ghost | Shadow Master |
+
+## Picking a level
+
+From the title screen you go to **PICK A WORLD**. Then you pick a level.
+
+- A level with a **lock** on it is not open yet.
+- Finish a level and the next one opens.
+- Beat a boss and the next **world** opens.
+- A small green square means you already finished that level.
+
+The game **remembers** what you have opened. It saves it in the browser, so it
+is still there tomorrow. It saves on that device only.
+
+### Codes
+
+Each world has a 4 letter code. You see it on the level screen for that world,
+and again when you beat a boss.
+
+| World | Code |
+| --- | --- |
+| Green Woods | LEAF |
+| Frost Peak | SNOW |
+| Sand Tomb | SAND |
+| Fire Keep | LAVA |
+| Shadow Fort | DARK |
+| Every level | BOSS |
+
+To use a code: title screen, then **I HAVE A CODE**. Type the 4 letters and
+press Space, or tap the + and - boxes and then tap **GO**.
+
+This is how you carry your place to another device, like from a laptop to a
+phone.
 
 ## Rules
 
-- You start with 5 hearts.
-- Spikes and lava take a heart. You come back at the last safe spot, not at the start.
-- Zombies and skeletons take a heart if they touch you.
+- You start each level with 5 hearts.
+- Spikes and lava take a heart. You come back at the last safe spot, not at
+  the start.
+- An enemy takes a heart if it touches you.
 - Jump on top of an enemy to squash it.
-- A ninja star kills a zombie in 1 hit and a skeleton in 2 hits.
+- A ninja star takes 1 hit point off an enemy. Small ones have 1 or 2.
 - Coins give you points. The flag gives you 25 points.
 - You get 1 heart back at the end of every level.
 - When your hearts run out you can try the same level again.
@@ -52,22 +97,62 @@ Power ups are in boxes. Walk into a box to take it.
 
 Star power does **not** save you from spikes, lava or holes. Only from enemies.
 
+The star is the strongest power up, so it sits in the **middle** of a level.
+Not at the start, and not next to the flag where it would be no use.
+
 The small bars at the top right show how much time is left on each power up.
 
-## The boss: Skull King
+## Springs
 
-Level 7 has no flag. To finish it you must beat the Skull King.
+A yellow spring on the ground throws you very high. Higher than any jump.
+Springs are in Frost Peak and after.
 
-- He walks at you, jumps, and spits bones.
-- Jump on his head, or hit him with ninja stars. Both take 1 hit point.
-- He has 10 hit points. The green bar at the top shows his health.
-- When his health drops to half he gets angry. His eyes and crown turn red,
-  he moves faster and spits more bones.
-- There are 2 hearts, a star and rapid stars in the arena. Use them.
+## The bosses
+
+Boss levels have no flag. To finish one you must beat the boss.
+
+Every boss has a green bar at the top. When the bar drops to half the boss
+gets **angry**: it turns red, moves faster and attacks more.
+
+| Boss | Hearts | What it does |
+| --- | --- | --- |
+| Skull King | 10 | Walks, jumps and spits bones |
+| Frost Giant | 12 | Jumps high and slams. The slam sends ice along the ground. Jump over it |
+| Mummy Lord | 12 | Throws wraps and calls small mummies to help |
+| Fire Dragon | 11 | Flies. Drops fire, then swoops past you |
+| Shadow Master | 13 | Vanishes and comes back somewhere else. You cannot hit it while it is see-through |
+
+Jump on a boss head, or hit it with ninja stars. Both take 1 hit point.
+
+Every boss arena has hearts and a power up. Use them.
 
 ## Make your own levels
 
-Open `levels.js`. Each level is a picture made of letters:
+`levels.js` is made by a helper program. Do not edit it by hand.
+
+Open `tools/genlevels.cjs`. Levels are built out of **chunks**: small pieces
+like `coin-arc`, `spike-step`, `spring-pit` or `flyer-hole`. A level is a list
+of chunks joined together.
+
+Run it:
+
+```powershell
+node tools\genlevels.cjs
+```
+
+It checks every rule for you. If a level is broken it tells you which tile is
+wrong and does not save.
+
+Then check the finished file:
+
+```powershell
+node tools\checklevels.cjs
+```
+
+This reads `levels.js` back, checks the rules again, and plays every level
+with a simple robot that only runs right and jumps. All 25 must pass.
+
+### The letters in a level
 
 | Letter | Meaning |
 | --- | --- |
@@ -76,68 +161,61 @@ Open `levels.js`. Each level is a picture made of letters:
 | `=` | platform |
 | `^` | spikes |
 | `~` | lava |
+| `T` | spring |
 | `o` | coin |
 | `P` | where the ninja starts |
 | `F` | the flag (the finish) |
-| `Z` | zombie |
-| `S` | skeleton |
-| `K` | the Skull King boss |
 | `H` | heart power up |
 | `M` | max up power up |
 | `*` | star power up |
 | `B` | jump boots power up |
 | `R` | rapid stars power up |
 
-Rules for editing:
+Enemies:
 
-1. Every row in a level must have the same number of letters.
-2. Each level needs exactly one `P`. It needs one `F`, or one `K` for a boss level.
+| Letter | Enemy |
+| --- | --- |
+| `Z` | Zombie |
+| `S` | Skeleton |
+| `W` | Snowman |
+| `V` | Bat |
+| `U` | Mummy |
+| `C` | Scorpion |
+| `I` | Imp |
+| `G` | Lava Blob |
+| `N` | Shadow Ninja |
+| `Y` | Ghost |
+
+Bosses:
+
+| Letter | Boss |
+| --- | --- |
+| `K` | Skull King |
+| `J` | Frost Giant |
+| `Q` | Mummy Lord |
+| `D` | Fire Dragon |
+| `X` | Shadow Master |
+
+### Rules for a level that works
+
+1. Every row in a level must have the same number of letters. There are 17 rows.
+2. Each level needs exactly one `P`. It needs one `F`, or one boss letter.
 3. Make lava and holes 3 tiles wide or less. One jump goes about 4 tiles.
-4. Keep spikes and enemies 3 tiles away from the edge of a hole. If not,
-   you land on them at the end of a jump.
-5. Do not put a platform right above spikes or an enemy. You bump your head
-   on the platform and drop back onto the danger.
-6. Do not put a platform above lava or a hole. You bump your head in the
-   middle of a long jump.
-7. Save the file and refresh the page in the browser.
-
-### The easy way to build levels
-
-`levels.js` is also made by a small helper. Open `tools/genlevels.cjs`.
-Near the top there is a list called `specs`. You give it numbers, not pictures:
-
-```js
-{
-  name: 'First Steps',
-  width: 80,
-  ground: [[0, 19], [22, 49], [52, 79]],   // where the floor is
-  lava: [[20, 21], [50, 51]],              // where the lava is
-  plat11: [[8, 11]],                       // low platforms
-  plat9: [[34, 37]],                       // high platforms
-  coins10: [9, 10],                        // coins over the low platforms
-  coins8: [35, 36],                        // coins over the high platforms
-  row13: [[3, 'P'], [30, '^'], [40, 'Z'], [76, 'F']],
-  extras: [[10, 47, 'B'], [13, 55, 'H']]  // row, column, letter
-}
-```
-
-A boss level adds `boss: true` and uses `K` instead of `F`.
-
-Then run it:
-
-```powershell
-node tools\genlevels.cjs
-```
-
-It checks all 4 rules above for you. If you break one, it tells you which
-tile is wrong and does not save. If everything is fine it writes `levels.js`.
+4. Keep spikes and enemies 3 tiles away from the edge of a hole.
+5. Do not put a platform right above spikes or an enemy.
+6. Do not put a platform above lava or a hole.
+7. A spring needs 7 empty rows above it.
+8. A star `*` goes between 35% and 65% of the way along the level.
 
 ## Handy tricks for testing
 
 Open the browser console (F12) and try:
 
 ```js
-NINJA.goTo(6)        // jump straight to level 7, the boss
+NINJA.goTo(4)          // jump to level 5, the first boss
+NINJA.goTo(3, 2)       // world 4, level 3
+NINJA.unlockAll()      // open every level
+NINJA.wipeSave()       // forget everything and start again
 NINJA.game.score = 100
 NINJA.player.starT = 600   // star power for 10 seconds
 ```
@@ -159,6 +237,7 @@ Then open http://localhost:8000 in a browser.
 | --- | --- |
 | `index.html` | The page, and the touch buttons |
 | `style.css` | How everything looks and where the buttons sit |
-| `game.js` | The game: moving, jumping, enemies, power ups, the boss, drawing |
-| `levels.js` | The level maps |
-| `tools/genlevels.cjs` | Builds `levels.js` and checks your levels are possible |
+| `game.js` | The game: moving, jumping, enemies, power ups, bosses, menus, drawing |
+| `levels.js` | The level maps. Made by the helper, do not edit |
+| `tools/genlevels.cjs` | Builds `levels.js` out of chunks and checks the rules |
+| `tools/checklevels.cjs` | Reads `levels.js` back and plays every level with a robot |
