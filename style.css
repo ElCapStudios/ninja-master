@@ -122,3 +122,12 @@ body.touch #pad { display: block; }
   .btn { width: 62px; height: 62px; font-size: 19px; }
   .btn-jump, .btn-throw { font-size: 13px; }
 }
+
+/* On narrow phones the four buttons must not touch each other. */
+@media (max-width: 380px) {
+  .btn { width: 60px; height: 60px; font-size: 18px; }
+  .btn-jump, .btn-throw { font-size: 12px; }
+  .pad-side { gap: 10px; }
+  .pad-left  { left: calc(8px + env(safe-area-inset-left)); }
+  .pad-right { right: calc(8px + env(safe-area-inset-right)); }
+}

@@ -134,6 +134,8 @@
   var confirmEdge = false;
   var navEdge = 0;
   var backEdge = false;
+  /* Escape (or the MENU button) only. Throw keys must never quit a level. */
+  var escEdge = false;
   var typedKey = '';
   var tapPoint = null;
 
@@ -141,6 +143,9 @@
   var KEY_RIGHT = { ArrowRight: 1, KeyD: 1 };
   var KEY_JUMP = { Space: 1, ArrowUp: 1, KeyW: 1, KeyZ: 1 };
   var KEY_THROW = { KeyX: 1, KeyJ: 1, KeyK: 1, ShiftLeft: 1, ShiftRight: 1, Enter: 1 };
+  /* These throw keys also mean "go back" on a menu. Enter is left out on
+     purpose, because Enter must always mean "yes, do it". */
+  var KEY_BACK_TOO = { KeyX: 1, KeyJ: 1, KeyK: 1, ShiftLeft: 1, ShiftRight: 1 };
 
   window.addEventListener('keydown', function (e) {
     Sound.init();
@@ -151,12 +156,12 @@
     /* Letters and Backspace are only used by the secret code screen. */
     if (/^Key[A-Z]$/.test(e.code)) { typedKey = e.code.slice(3); }
     else if (e.code === 'Backspace') { typedKey = '<'; e.preventDefault(); }
-    else if (e.code === 'Escape') { backEdge = true; }
+    else if (e.code === 'Escape') { backEdge = true; escEdge = true; }
 
     if (KEY_LEFT[e.code]) { input.left = true; navEdge = -1; e.preventDefault(); }
     else if (KEY_RIGHT[e.code]) { input.right = true; navEdge = 1; e.preventDefault(); }
     else if (KEY_JUMP[e.code]) { input.jumpHeld = true; jumpBuffer = 8; confirmEdge = true; e.preventDefault(); }
-    else if (KEY_THROW[e.code]) { input.throwHeld = true; throwEdge = true; confirmEdge = true; backEdge = true; e.preventDefault(); }
+    else if (KEY_THROW[e.code]) { input.throwHeld = true; throwEdge = true; confirmEdge = true; if (KEY_BACK_TOO[e.code]) { backEdge = true; } e.preventDefault(); }
   });
 
   window.addEventListener('keyup', function (e) {
@@ -248,6 +253,16 @@
       if (ex) { ex.call(document); }
     }
   });
+
+  var menuBtn = document.getElementById('btn-menu');
+  if (menuBtn) {
+    menuBtn.addEventListener('click', function () {
+      Sound.init();
+      escEdge = true;
+      backEdge = true;
+      menuBtn.blur();
+    });
+  }
 
   /* ---------------- helpers ---------------- */
 
@@ -812,6 +827,7 @@
     confirmEdge = false;
     navEdge = 0;
     backEdge = false;
+    escEdge = false;
     typedKey = '';
     tapPoint = null;
   }
@@ -891,6 +907,15 @@
     }
 
     /* ----- playing ----- */
+
+    /* Press Escape, or tap MENU, to leave a level and pick a new one. */
+    if (escEdge) {
+      Sound.menu();
+      menu.world = worldOf(game.level);
+      menu.level = game.level - firstLevelOf(menu.world);
+      goMode('levels');
+      return;
+    }
 
     updatePlayer();
     updateEnemies();

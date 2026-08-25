@@ -17,8 +17,9 @@ The last level in each world is a **boss fight**.
 | --- | --- |
 | Arrow Left / Right, or A / D | Move. In a menu it moves the yellow box |
 | Space, Up arrow, or W | Jump. In a menu it picks the thing |
+| Enter | In a menu it picks the thing. In a level it throws a star |
 | X, J, or Shift | Throw a ninja star. In a menu it goes back |
-| Escape | Go back |
+| Escape | Go back. In a level it takes you to the level select |
 
 ### Touch screen
 
@@ -28,6 +29,8 @@ STAR on the other side.
 In a menu you can just **tap the box you want**.
 
 While you play, tapping anywhere on the game makes you jump.
+
+Tap **MENU** at the top to leave a level and pick a different one.
 
 ## The worlds
 
