@@ -23,7 +23,15 @@
     { skyTop: '#180d2c', skyBot: '#3c1f4c', hillFar: '#2a1a45', hillNear: '#190f30',
       rock: '#463a58', rockTop: '#6d5a7a', plank: '#5d4630', plankTop: '#7f6140' },
     { skyTop: '#280b0e', skyBot: '#5a171b', hillFar: '#3a1214', hillNear: '#20080a',
-      rock: '#553028', rockTop: '#7d4b3a', plank: '#5a3a28', plankTop: '#7c5238' }
+      rock: '#553028', rockTop: '#7d4b3a', plank: '#5a3a28', plankTop: '#7c5238' },
+    { skyTop: '#04202a', skyBot: '#0d4a52', hillFar: '#0c313e', hillNear: '#06202b',
+      rock: '#2f4f55', rockTop: '#4a757c', plank: '#5b5030', plankTop: '#7d6e44' },
+    { skyTop: '#1d1a10', skyBot: '#4a3f20', hillFar: '#2e2716', hillNear: '#17130a',
+      rock: '#4d4534', rockTop: '#736850', plank: '#63492c', plankTop: '#87663f' },
+    { skyTop: '#0a1a3d', skyBot: '#2e5aa8', hillFar: '#1d3a76', hillNear: '#102450',
+      rock: '#48597e', rockTop: '#7089b5', plank: '#7a6a4a', plankTop: '#a08c62' },
+    { skyTop: '#150410', skyBot: '#480a2a', hillFar: '#2c0720', hillNear: '#150312',
+      rock: '#4a2438', rockTop: '#743a56', plank: '#5a2f3c', plankTop: '#7d4352' }
   ];
   /* ---------------- sound ---------------- */
 
@@ -61,6 +69,12 @@
     squish: function () { this.tone(240, 0.1, 'square', 0.09, 90); },
     stomp: function () { this.tone(520, 0.08, 'square', 0.09, 260); },
     hurt: function () { this.tone(260, 0.28, 'sawtooth', 0.13, 80); },
+    power: function () {
+      var s = this, notes = [523, 698, 880];
+      notes.forEach(function (n, i) { setTimeout(function () { s.tone(n, 0.12, 'square', 0.1); }, i * 70); });
+    },
+    heal: function () { this.tone(660, 0.1, 'triangle', 0.11); var s = this; setTimeout(function () { s.tone(990, 0.16, 'triangle', 0.11); }, 90); },
+    roar: function () { this.tone(120, 0.5, 'sawtooth', 0.14, 55); },
     win: function () {
       var s = this, notes = [523, 659, 784, 1046];
       notes.forEach(function (n, i) { setTimeout(function () { s.tone(n, 0.16, 'square', 0.1); }, i * 110); });
@@ -196,13 +210,28 @@
     level: 0,
     score: 0,
     hearts: 5,
+    maxHearts: 5,
     timer: 0,
     shake: 0,
     frame: 0,
     best: 0
   };
 
-  var MAX_HEARTS = 5;
+  var START_HEARTS = 5;
+  var HEART_CAP = 8;
+
+  /* The things you can pick up. Each one has a letter you put in levels.js. */
+  var POWERUPS = {
+    'H': { name: 'HEART', color: '#ff5a6e', help: 'one heart back' },
+    'M': { name: 'MAX UP', color: '#ff9ad0', help: 'one more heart for ever' },
+    '*': { name: 'STAR', color: '#ffd93d', help: 'enemies die if you touch them' },
+    'B': { name: 'BOOTS', color: '#5ad2ff', help: 'higher jumps and a triple jump' },
+    'R': { name: 'RAPID', color: '#a8ff5a', help: 'throw ninja stars much faster' }
+  };
+
+  var STAR_TIME = 8 * 60;
+  var BOOT_TIME = 14 * 60;
+  var RAPID_TIME = 14 * 60;
 
   try { game.best = parseInt(localStorage.getItem('ninjaMasterBest') || '0', 10) || 0; } catch (e) { game.best = 0; }
 
@@ -210,10 +239,14 @@
   var player = null;
   var enemies = [];
   var coins = [];
+  var powerups = [];
   var shurikens = [];
   var bones = [];
   var particles = [];
   var flag = null;
+  var boss = null;
+  var bossDown = 0;
+  var toasts = [];
   var spawn = { x: 40, y: 40 };
   var safeSpot = { x: 40, y: 40 };
   var cam = { x: 0 };
@@ -256,10 +289,14 @@
 
     enemies = [];
     coins = [];
+    powerups = [];
     shurikens = [];
     bones = [];
     particles = [];
+    toasts = [];
     flag = null;
+    boss = null;
+    bossDown = 0;
 
     for (var r = 0; r < level.h; r++) {
       for (var c = 0; c < level.w; c++) {
@@ -270,8 +307,15 @@
         } else if (ch === 'o') {
           coins.push({ x: c * TILE + 4, y: r * TILE + 4, w: 8, h: 8, taken: false, t: (c * 3 + r * 5) % 60 });
           level.grid[r][c] = '.';
+        } else if (POWERUPS[ch]) {
+          powerups.push({ kind: ch, x: c * TILE + 2, y: r * TILE + 2, w: 12, h: 12, taken: false, t: (c * 7 + r * 11) % 60 });
+          level.grid[r][c] = '.';
         } else if (ch === 'Z' || ch === 'S') {
           enemies.push(makeEnemy(ch, c, r));
+          level.grid[r][c] = '.';
+        } else if (ch === 'K') {
+          boss = makeBoss(c, r);
+          enemies.push(boss);
           level.grid[r][c] = '.';
         } else if (ch === 'F') {
           flag = { x: c * TILE + 3, y: r * TILE - 32, w: 11, h: 48 };
@@ -291,27 +335,32 @@
       vx: 0, vy: 0,
       onGround: false, facing: 1,
       jumpsLeft: 2, coyote: 0, invuln: 0,
-      throwCd: 0, animT: 0, dying: false
+      throwCd: 0, animT: 0, dying: false,
+      starT: 0, bootT: 0, rapidT: 0
     };
     safeSpot.x = spawn.x;
     safeSpot.y = spawn.y;
   }
 
   /* After losing a heart the ninja comes back at the last safe piece of
-     ground, not at the very start of the level. */
+     ground, not at the very start of the level. Boots and rapid stars keep
+     working. Star power stops, because you get flashing safe time instead. */
   function respawnAtSafeSpot() {
     player.x = safeSpot.x;
     player.y = safeSpot.y;
     player.vx = 0;
     player.vy = 0;
-    player.jumpsLeft = 2;
+    player.jumpsLeft = maxJumps();
     player.coyote = 0;
     player.invuln = 90;
+    player.starT = 0;
     player.dying = false;
     bones = [];
     shurikens = [];
     burst(player.x + 5, player.y + 7, '#8fa7ff', 12, 3);
   }
+
+  function maxJumps() { return player && player.bootT > 0 ? 3 : 2; }
 
   function makeEnemy(kind, cx, cy) {
     var isZombie = kind === 'Z';
@@ -329,6 +378,29 @@
       hurt: 0,
       cd: 60 + Math.floor(Math.random() * 80),
       animT: Math.random() * 40
+    };
+  }
+
+  /* The Skull King. A big skeleton boss. He chases you, jumps, and spits
+     bones. Stomp his head or hit him with ninja stars. */
+  function makeBoss(cx, cy) {
+    return {
+      kind: 'boss',
+      x: cx * TILE,
+      y: (cy + 1) * TILE - 30,
+      w: 26, h: 30,
+      dir: -1,
+      speed: 0.5,
+      vx: 0,
+      vy: 0,
+      hp: 10,
+      maxHp: 10,
+      alive: true,
+      hurt: 0,
+      cd: 120,
+      jumpCd: 200,
+      mouth: 0,
+      animT: 0
     };
   }
 
@@ -408,29 +480,31 @@
   /* ---------------- player actions ---------------- */
 
   function doJump() {
+    var boost = player.bootT > 0 ? 1.16 : 1;
     if (player.onGround || player.coyote > 0) {
-      player.vy = JUMP_V;
-      player.jumpsLeft = 1;
+      player.vy = JUMP_V * boost;
+      player.jumpsLeft = maxJumps() - 1;
       player.coyote = 0;
       player.onGround = false;
       Sound.jump();
-      burst(player.x + 5, player.y + 15, '#8899bb', 4, 1.6);
+      burst(player.x + 5, player.y + 15, player.bootT > 0 ? '#5ad2ff' : '#8899bb', 5, 1.8);
     } else if (player.jumpsLeft > 0) {
-      player.vy = JUMP_V * 0.92;
-      player.jumpsLeft = 0;
+      player.vy = JUMP_V * 0.92 * boost;
+      player.jumpsLeft--;
       Sound.flip();
-      burst(player.x + 5, player.y + 12, '#ffffff', 7, 2.4);
+      burst(player.x + 5, player.y + 12, player.bootT > 0 ? '#5ad2ff' : '#ffffff', 7, 2.4);
     }
   }
 
   function doThrow() {
-    if (player.throwCd > 0 || shurikens.length >= 3) { return; }
-    player.throwCd = 16;
+    var rapid = player.rapidT > 0;
+    if (player.throwCd > 0 || shurikens.length >= (rapid ? 6 : 3)) { return; }
+    player.throwCd = rapid ? 6 : 16;
     shurikens.push({
       x: player.x + (player.facing > 0 ? 8 : -2),
       y: player.y + 5,
       w: 6, h: 6,
-      vx: player.facing * 4.4,
+      vx: player.facing * (rapid ? 5.6 : 4.4),
       rot: 0,
       life: 90
     });
@@ -438,7 +512,7 @@
   }
 
   function hurtPlayer(fromX) {
-    if (player.invuln > 0 || player.dying) { return; }
+    if (player.invuln > 0 || player.starT > 0 || player.dying) { return; }
     game.hearts--;
     player.invuln = 100;
     player.vx = (player.x + 5 < fromX ? -1 : 1) * 3;
@@ -447,6 +521,53 @@
     Sound.hurt();
     burst(player.x + 5, player.y + 7, '#ff5a5a', 10, 3);
     if (game.hearts <= 0) { gameOver(); }
+  }
+
+  /* A short word that floats up the screen when you pick something up. */
+  function toast(str, color) {
+    toasts.push({ t: str, c: color, life: 80, x: player.x + 5, y: player.y - 4 });
+  }
+
+  function healHearts(n) {
+    var before = game.hearts;
+    game.hearts = Math.min(game.maxHearts, game.hearts + n);
+    return game.hearts - before;
+  }
+
+  function takePowerup(pu) {
+    pu.taken = true;
+    var info = POWERUPS[pu.kind];
+    burst(pu.x + 6, pu.y + 6, info.color, 16, 3.2);
+    game.score += 3;
+
+    if (pu.kind === 'H') {
+      if (healHearts(1) > 0) { toast('+1 HEART', info.color); }
+      else { game.score += 10; toast('+10 POINTS', '#ffd93d'); }
+      Sound.heal();
+    } else if (pu.kind === 'M') {
+      if (game.maxHearts < HEART_CAP) {
+        game.maxHearts++;
+        game.hearts = game.maxHearts;
+        toast('MAX HEARTS UP', info.color);
+      } else {
+        healHearts(game.maxHearts);
+        toast('ALL HEARTS FULL', info.color);
+      }
+      Sound.heal();
+    } else if (pu.kind === '*') {
+      player.starT = STAR_TIME;
+      toast('STAR POWER', info.color);
+      Sound.power();
+    } else if (pu.kind === 'B') {
+      player.bootT = BOOT_TIME;
+      player.jumpsLeft = Math.max(player.jumpsLeft, 1);
+      toast('JUMP BOOTS', info.color);
+      Sound.power();
+    } else if (pu.kind === 'R') {
+      player.rapidT = RAPID_TIME;
+      toast('RAPID STARS', info.color);
+      Sound.power();
+    }
   }
 
   function killPlayer() {
@@ -468,9 +589,27 @@
 
   function killEnemy(e) {
     e.alive = false;
+    if (e.kind === 'boss') {
+      game.score += 100;
+      game.shake = 26;
+      bossDown = 130;
+      burst(e.x + 13, e.y + 15, '#f2f0e6', 40, 5);
+      burst(e.x + 13, e.y + 15, '#ff6b6b', 30, 4);
+      Sound.win();
+      return;
+    }
     game.score += 5;
     burst(e.x + 6, e.y + 7, e.kind === 'zombie' ? '#7fd05f' : '#e8e6dd', 14, 3.4);
     Sound.squish();
+  }
+
+  function damageEnemy(e, n) {
+    e.hp -= n;
+    e.hurt = 12;
+    if (e.hp <= 0) { killEnemy(e); return true; }
+    burst(e.x + e.w / 2, e.y + 6, '#ffffff', 6, 2);
+    Sound.bonk();
+    return false;
   }
 
   function saveBest() {
@@ -492,7 +631,8 @@
       if (consumeConfirm()) {
         game.level = 0;
         game.score = 0;
-        game.hearts = MAX_HEARTS;
+        game.maxHearts = START_HEARTS;
+        game.hearts = START_HEARTS;
         loadLevel(0);
         game.mode = 'play';
         game.timer = 0;
@@ -519,6 +659,7 @@
 
     if (game.mode === 'clear') {
       updateParticles();
+      updateToasts();
       if (game.timer > 100 || (game.timer > 30 && consumeConfirm())) {
         game.level++;
         if (game.level >= LEVELS.length) {
@@ -527,6 +668,7 @@
           game.timer = 0;
           Sound.win();
         } else {
+          healHearts(1);
           loadLevel(game.level);
           game.mode = 'play';
           game.timer = 0;
@@ -540,7 +682,7 @@
       updateParticles();
       saveBest();
       if (game.timer > 40 && consumeConfirm()) {
-        game.hearts = MAX_HEARTS;
+        game.hearts = game.maxHearts;
         loadLevel(game.level);
         game.mode = 'play';
         game.timer = 0;
@@ -565,7 +707,22 @@
     updateShurikens();
     updateBones();
     updateCoins();
+    updatePowerups();
     updateParticles();
+    updateToasts();
+
+    /* The boss level ends when the Skull King falls over. */
+    if (bossDown > 0) {
+      bossDown--;
+      if (game.frame % 9 === 0 && boss) {
+        burst(boss.x + 4 + Math.random() * 18, boss.y + 8 + Math.random() * 16, '#ffd93d', 6, 3);
+      }
+      if (bossDown === 0) {
+        game.score += 25;
+        game.mode = 'clear';
+        game.timer = 0;
+      }
+    }
 
     if (flag && overlap(player, flag) && !player.dying) {
       game.score += 25;
@@ -593,6 +750,21 @@
     p.animT++;
     if (p.invuln > 0) { p.invuln--; }
     if (p.throwCd > 0) { p.throwCd--; }
+    if (p.starT > 0) {
+      p.starT--;
+      if (p.starT === 0) { toast('STAR GONE', '#ffd93d'); }
+      if (game.frame % 3 === 0) {
+        burst(p.x + 5, p.y + 8, ['#ffd93d', '#ff6b6b', '#5ad2ff'][game.frame % 3], 1, 1.4);
+      }
+    }
+    if (p.bootT > 0) {
+      p.bootT--;
+      if (p.bootT === 0) { toast('BOOTS GONE', '#5ad2ff'); }
+    }
+    if (p.rapidT > 0) {
+      p.rapidT--;
+      if (p.rapidT === 0) { toast('RAPID GONE', '#a8ff5a'); }
+    }
 
     var dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     if (dir !== 0) {
@@ -621,7 +793,7 @@
 
     p.x = clamp(p.x, 0, level.pxW - p.w);
 
-    if (p.onGround) { p.coyote = 6; p.jumpsLeft = 2; }
+    if (p.onGround) { p.coyote = 6; p.jumpsLeft = maxJumps(); }
     else if (p.coyote > 0) { p.coyote--; }
 
     if (p.y > level.pxH + 8) { killPlayer(); return; }
@@ -631,7 +803,7 @@
       var safe = true;
       for (var s = 0; s < enemies.length; s++) {
         var en = enemies[s];
-        if (en.alive && Math.abs(en.x - p.x) < 30 && Math.abs(en.y - p.y) < 24) { safe = false; break; }
+        if (en.alive && Math.abs(en.x - p.x) < 30 + en.w && Math.abs(en.y - p.y) < 24 + en.h) { safe = false; break; }
       }
       if (safe) { safeSpot.x = p.x; safeSpot.y = p.y; }
     }
@@ -640,12 +812,26 @@
       var e = enemies[i];
       if (!e.alive) { continue; }
       if (!overlap(p, e)) { continue; }
-      if (p.vy > 0.8 && (p.y + p.h) < e.y + 9) {
-        e.hp = 0;
-        killEnemy(e);
-        p.vy = -5.6;
+      var headTop = e.y + (e.kind === 'boss' ? 14 : 9);
+      if (p.vy > 0.8 && (p.y + p.h) < headTop) {
+        if (e.kind === 'boss') {
+          damageEnemy(e, 1);
+          p.vy = -6.6;
+          game.shake = 8;
+        } else {
+          e.hp = 0;
+          killEnemy(e);
+          p.vy = -5.6;
+        }
         p.jumpsLeft = Math.max(p.jumpsLeft, 1);
         Sound.stomp();
+      } else if (p.starT > 0 && e.kind !== 'boss') {
+        e.hp = 0;
+        killEnemy(e);
+        game.score += 3;
+      } else if (p.starT > 0 && e.kind === 'boss') {
+        if (e.hurt <= 0) { damageEnemy(e, 1); game.shake = 8; }
+        p.vx = (p.x + 5 < e.x + e.w / 2 ? -1 : 1) * 3.4;
       } else {
         hurtPlayer(e.x + e.w / 2);
       }
@@ -663,13 +849,18 @@
       e.vy += GRAVITY;
       if (e.vy > MAX_FALL) { e.vy = MAX_FALL; }
 
-      e.vx = e.dir * e.speed;
+      if (e.kind === 'boss') { bossThink(e); }
+      else { e.vx = e.dir * e.speed; }
+
       e.bumped = false;
       e.x += e.vx;
       resolveX(e);
-      if (e.bumped) { e.dir = -e.dir; }
+      if (e.bumped && e.kind !== 'boss') { e.dir = -e.dir; }
       e.y += e.vy;
       resolveY(e);
+      e.x = clamp(e.x, 0, level.pxW - e.w);
+
+      if (e.kind === 'boss') { continue; }
 
       var acx = Math.floor((e.dir > 0 ? e.x + e.w + 1 : e.x - 1) / TILE);
       var footCy = Math.floor((e.y + e.h + 2) / TILE);
@@ -697,6 +888,73 @@
     }
   }
 
+  /* Boss brain. He walks at you, jumps, and spits bones.
+     When he is down to half health he gets angry and speeds up. */
+  function bossThink(e) {
+    if (e.jumpCd > 0) { e.jumpCd--; }
+    if (e.mouth > 0) { e.mouth--; }
+
+    var toward = (player.x + 5) < (e.x + e.w / 2) ? -1 : 1;
+    e.dir = toward;
+    var rage = e.hp <= Math.ceil(e.maxHp / 2);
+    if (rage && !e.raged) { e.raged = true; game.shake = 12; Sound.roar(); }
+
+    var acx = Math.floor((toward > 0 ? e.x + e.w + 1 : e.x - 1) / TILE);
+    var footCy = Math.floor((e.y + e.h + 2) / TILE);
+    var bodyCy = Math.floor((e.y + e.h / 2) / TILE);
+    var blocked = !isSolid(tileAt(acx, footCy)) || isSolid(tileAt(acx, bodyCy)) ||
+                  hazardRect(tileAt(acx, bodyCy), acx, bodyCy) ||
+                  hazardRect(tileAt(acx, footCy), acx, footCy);
+
+    if (e.hurt > 8 || (blocked && e.onGround)) { e.vx = 0; }
+    else { e.vx = toward * (rage ? 0.95 : 0.55); }
+
+    if (e.cd <= 0) {
+      e.cd = rage ? 75 : 115;
+      e.mouth = 24;
+      var shots = rage ? 3 : 2;
+      for (var i = 0; i < shots; i++) {
+        bones.push({
+          x: e.x + e.w / 2 - 3, y: e.y + 10, w: 6, h: 6,
+          vx: toward * (1.9 + i * 0.8), vy: -2.4 + i * 0.6, rot: 0
+        });
+      }
+      Sound.bonk();
+    }
+
+    if (e.jumpCd <= 0 && e.onGround) {
+      e.jumpCd = rage ? 130 : 200;
+      e.vy = -7.4;
+      game.shake = 4;
+      Sound.jump();
+    }
+
+    if (e.onGround && e.vy === 0 && e.landShake) {
+      e.landShake = false;
+      game.shake = 6;
+      burst(e.x + e.w / 2, e.y + e.h, '#8d7f6a', 8, 2.4);
+    }
+    if (!e.onGround) { e.landShake = true; }
+  }
+
+  function updatePowerups() {
+    for (var i = 0; i < powerups.length; i++) {
+      var pu = powerups[i];
+      if (pu.taken) { continue; }
+      pu.t++;
+      if (overlap(pu, player) && !player.dying) { takePowerup(pu); }
+    }
+  }
+
+  function updateToasts() {
+    for (var i = toasts.length - 1; i >= 0; i--) {
+      var t = toasts[i];
+      t.y -= 0.35;
+      t.life--;
+      if (t.life <= 0) { toasts.splice(i, 1); }
+    }
+  }
+
   function updateShurikens() {
     for (var i = shurikens.length - 1; i >= 0; i--) {
       var s = shurikens[i];
@@ -713,11 +971,8 @@
       for (var j = 0; j < enemies.length; j++) {
         var e = enemies[j];
         if (!e.alive || !overlap(s, e)) { continue; }
-        e.hp--;
-        e.hurt = 10;
         hitSomething = true;
-        if (e.hp <= 0) { killEnemy(e); }
-        else { burst(e.x + 6, e.y + 6, '#ffffff', 6, 2); Sound.bonk(); }
+        damageEnemy(e, 1);
         break;
       }
       if (hitSomething) { shurikens.splice(i, 1); }
@@ -962,6 +1217,14 @@
     var SUIT_DARK = '#2a3155';
     var SKIN = '#4f5c8c';
     var RED = '#e8483a';
+    if (p.starT > 0) {
+      var RAINBOW = ['#ffd93d', '#ff6b6b', '#5ad2ff', '#a8ff5a'];
+      var k = Math.floor(game.frame / 4) % 4;
+      SUIT = RAINBOW[k];
+      SUIT_DARK = RAINBOW[(k + 1) % 4];
+      RED = RAINBOW[(k + 2) % 4];
+      SKIN = RAINBOW[(k + 3) % 4];
+    }
     var parts = [];
 
     // scarf trailing behind
@@ -1077,6 +1340,108 @@
     }
   }
 
+  function drawPowerups() {
+    for (var i = 0; i < powerups.length; i++) {
+      var pu = powerups[i];
+      if (pu.taken) { continue; }
+      var info = POWERUPS[pu.kind];
+      var bob = Math.sin(pu.t * 0.08) * 2;
+      var x = Math.round(pu.x), y = Math.round(pu.y + bob);
+
+      ctx.globalAlpha = 0.28 + 0.22 * Math.sin(pu.t * 0.1);
+      ctx.fillStyle = info.color;
+      ctx.fillRect(x - 3, y - 3, 18, 18);
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = '#05060d';
+      ctx.fillRect(x - 1, y - 1, 14, 14);
+      ctx.fillStyle = info.color;
+      ctx.fillRect(x, y, 12, 12);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillRect(x + 1, y + 1, 10, 2);
+
+      ctx.fillStyle = '#1a1030';
+      if (pu.kind === 'H' || pu.kind === 'M') {
+        ctx.fillRect(x + 2, y + 3, 2, 2);
+        ctx.fillRect(x + 8, y + 3, 2, 2);
+        ctx.fillRect(x + 2, y + 5, 8, 2);
+        ctx.fillRect(x + 3, y + 7, 6, 1);
+        ctx.fillRect(x + 5, y + 8, 2, 1);
+        if (pu.kind === 'M') { ctx.fillRect(x + 1, y + 1, 3, 1); ctx.fillRect(x + 2, y, 1, 3); }
+      } else if (pu.kind === '*') {
+        ctx.fillRect(x + 5, y + 1, 2, 3);
+        ctx.fillRect(x + 1, y + 4, 10, 2);
+        ctx.fillRect(x + 3, y + 6, 6, 2);
+        ctx.fillRect(x + 2, y + 8, 2, 2);
+        ctx.fillRect(x + 8, y + 8, 2, 2);
+      } else if (pu.kind === 'B') {
+        ctx.fillRect(x + 3, y + 2, 3, 6);
+        ctx.fillRect(x + 3, y + 8, 7, 2);
+        ctx.fillRect(x + 6, y + 1, 2, 2);
+      } else if (pu.kind === 'R') {
+        ctx.fillRect(x + 5, y + 1, 2, 10);
+        ctx.fillRect(x + 1, y + 5, 10, 2);
+        ctx.fillRect(x + 3, y + 3, 2, 2);
+        ctx.fillRect(x + 7, y + 7, 2, 2);
+      }
+    }
+  }
+
+  function drawToasts() {
+    for (var i = 0; i < toasts.length; i++) {
+      var t = toasts[i];
+      ctx.globalAlpha = clamp(t.life / 30, 0, 1);
+      text(t.t, t.x, t.y, 9, t.c);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* The Skull King. Same idea as the small sprites, just bigger. */
+  function drawBoss(e) {
+    var dx = Math.round(e.x), dy = Math.round(e.y);
+    var flash = e.hurt > 0 && Math.floor(e.hurt / 2) % 2 === 0;
+    var rage = e.hp <= Math.ceil(e.maxHp / 2);
+    var bone = flash ? '#ffb0b0' : '#f2f0e6';
+    var dark = flash ? '#cc7070' : '#a9a69a';
+    var eye = rage ? '#ff3b1f' : '#ff8a2b';
+    var f = e.dir;
+    var sway = Math.round(Math.sin(e.animT * 0.09) * 2);
+    var jaw = e.mouth > 0 ? 2 : 0;
+
+    drawSprite([
+      [dx + 4 + sway, dy + 24, 5, 6, dark],
+      [dx + 17 - sway, dy + 24, 5, 6, dark],
+      [dx + 6, dy + 14, 14, 10, bone],
+      [dx + 6, dy + 17, 14, 1, dark],
+      [dx + 6, dy + 20, 14, 1, dark],
+      [f > 0 ? dx + 20 : dx - 2, dy + 15 + sway, 8, 3, bone],
+      [dx + 3, dy + 2, 20, 13, bone],
+      [dx + 6, dy + 6, 5, 5, '#120b1a'],
+      [dx + 15, dy + 6, 5, 5, '#120b1a'],
+      [dx + 7, dy + 7, 3, 3, eye],
+      [dx + 16, dy + 7, 3, 3, eye],
+      [dx + 8, dy + 13 + jaw, 10, 2, '#120b1a'],
+      [dx + 1, dy, 4, 5, rage ? '#ff3b1f' : '#c9b03a'],
+      [dx + 21, dy, 4, 5, rage ? '#ff3b1f' : '#c9b03a'],
+      [dx + 5, dy - 2, 16, 3, rage ? '#ff6b3b' : '#e0c552']
+    ]);
+  }
+
+  function drawBossBar() {
+    if (!boss || (!boss.alive && bossDown <= 0)) { return; }
+    var w = 180, x = (VIEW_W - w) / 2, y = 34;
+    var pct = clamp(boss.hp / boss.maxHp, 0, 1);
+    ctx.fillStyle = 'rgba(4,6,14,0.75)';
+    ctx.fillRect(x - 2, y - 2, w + 4, 10);
+    ctx.fillStyle = '#3a2030';
+    ctx.fillRect(x, y, w, 6);
+    ctx.fillStyle = pct > 0.5 ? '#7fd05f' : (pct > 0.25 ? '#ffd93d' : '#ff4d4d');
+    ctx.fillRect(x, y, Math.round(w * pct), 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(x, y, Math.round(w * pct), 2);
+    text('SKULL KING', VIEW_W / 2, y + 13, 9, '#ffffff');
+  }
+
   function drawParticles() {
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
@@ -1100,8 +1465,19 @@
     }
   }
 
+  function drawTimerBar(x, y, t, max, color, label) {
+    var w = 28;
+    ctx.fillStyle = 'rgba(4,6,14,0.6)';
+    ctx.fillRect(x - 1, y - 1, w + 2, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(x, y, w, 4);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, Math.round(w * clamp(t / max, 0, 1)), 4);
+    text(label, x + w / 2, y + 10, 8, color);
+  }
+
   function drawHUD() {
-    for (var i = 0; i < MAX_HEARTS; i++) {
+    for (var i = 0; i < game.maxHearts; i++) {
       drawHeart(8 + i * 13, 8, i < game.hearts);
     }
     ctx.fillStyle = '#ffd93d';
@@ -1110,6 +1486,13 @@
     ctx.fillRect(10, 23, 2, 3);
     text(String(game.score), 21, 26, 12, '#ffffff', 'left');
     text('LEVEL ' + (game.level + 1) + ' - ' + level.name, VIEW_W / 2, 13, 10, 'rgba(255,255,255,0.75)');
+
+    var bx = VIEW_W - 34;
+    if (player.starT > 0) { drawTimerBar(bx, 8, player.starT, STAR_TIME, '#ffd93d', 'STAR'); bx -= 34; }
+    if (player.bootT > 0) { drawTimerBar(bx, 8, player.bootT, BOOT_TIME, '#5ad2ff', 'BOOTS'); bx -= 34; }
+    if (player.rapidT > 0) { drawTimerBar(bx, 8, player.rapidT, RAPID_TIME, '#a8ff5a', 'RAPID'); }
+
+    drawBossBar();
   }
 
   function panel(alpha) {
@@ -1126,11 +1509,11 @@
 
     drawNinjaBig(VIEW_W / 2 - 18, 96 + bob * 0.5, 3);
 
-    text('KEYBOARD', VIEW_W / 2, 168, 11, '#ffd93d');
-    text('ARROWS or A D to move    SPACE to jump', VIEW_W / 2, 182, 10, 'rgba(255,255,255,0.85)');
-    text('X to throw a ninja star', VIEW_W / 2, 194, 10, 'rgba(255,255,255,0.85)');
-    text('PHONE or TABLET:  use the round buttons', VIEW_W / 2, 212, 10, 'rgba(255,255,255,0.85)');
-    text('Jump again in the air for a DOUBLE JUMP', VIEW_W / 2, 228, 10, '#ffd93d');
+    text('KEYBOARD', VIEW_W / 2, 166, 11, '#ffd93d');
+    text('ARROWS or A D to move    SPACE to jump', VIEW_W / 2, 180, 10, 'rgba(255,255,255,0.85)');
+    text('X to throw a ninja star', VIEW_W / 2, 192, 10, 'rgba(255,255,255,0.85)');
+    text('PHONE or TABLET:  use the round buttons', VIEW_W / 2, 208, 10, 'rgba(255,255,255,0.85)');
+    text('Grab boxes for power ups.  7 levels.  1 boss.', VIEW_W / 2, 224, 10, '#ffd93d');
 
     if (Math.floor(game.frame / 30) % 2 === 0) {
       text('PRESS SPACE  or  TAP TO START', VIEW_W / 2, 250, 13, '#ffffff');
@@ -1177,18 +1560,31 @@
     drawTiles();
     drawFlag();
     drawCoins();
+    drawPowerups();
 
     for (var i = 0; i < enemies.length; i++) {
       var e = enemies[i];
       if (!e.alive) { continue; }
-      if (e.x - cam.x < -40 || e.x - cam.x > VIEW_W + 40) { continue; }
-      if (e.kind === 'zombie') { drawZombie(e); } else { drawSkeleton(e); }
+      if (e.x - cam.x < -60 || e.x - cam.x > VIEW_W + 60) { continue; }
+      if (e.kind === 'boss') { drawBoss(e); }
+      else if (e.kind === 'zombie') { drawZombie(e); }
+      else { drawSkeleton(e); }
+    }
+
+    /* The beaten Skull King sinks into the ground before the level ends. */
+    if (boss && !boss.alive && bossDown > 0) {
+      ctx.save();
+      ctx.globalAlpha = clamp(bossDown / 130, 0, 1);
+      ctx.translate(0, (130 - bossDown) * 0.16);
+      drawBoss(boss);
+      ctx.restore();
     }
 
     drawBones();
     drawShurikens();
     if (game.mode !== 'dead') { drawNinja(player); }
     drawParticles();
+    drawToasts();
 
     ctx.restore();
 
@@ -1242,9 +1638,18 @@
     get player() { return player; },
     get level() { return level; },
     get enemies() { return enemies; },
+    get powerups() { return powerups; },
+    get boss() { return boss; },
     get flag() { return flag; },
     jump: function () { jumpBuffer = 8; confirmEdge = true; },
-    attack: function () { throwEdge = true; }
+    attack: function () { throwEdge = true; },
+    /* Jump straight to a level. Try:  NINJA.goTo(6)  for the boss. */
+    goTo: function (n) {
+      game.level = clamp(n, 0, LEVELS.length - 1);
+      game.mode = 'play';
+      game.timer = 0;
+      loadLevel(game.level);
+    }
   };
 
   loadLevel(0);
