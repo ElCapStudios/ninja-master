@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d1a">
+<meta name="description" content="Ninja Master - a platform game you can play with a keyboard or your fingers.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Ninja Master</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0d1a'/><rect x='4' y='3' width='8' height='4' fill='%23d63a3a'/><rect x='4' y='7' width='8' height='6' fill='%23222436'/><rect x='5' y='8' width='2' height='2' fill='%23ffffff'/><rect x='9' y='8' width='2' height='2' fill='%23ffffff'/></svg>">
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="game" width="480" height="272"></canvas>
+
+  <div id="pad">
+    <div class="pad-side pad-left">
+      <button class="btn" id="btn-left"  aria-label="Move left">&#9664;</button>
+      <button class="btn" id="btn-right" aria-label="Move right">&#9654;</button>
+    </div>
+    <div class="pad-side pad-right">
+      <button class="btn btn-throw" id="btn-throw" aria-label="Throw star">STAR</button>
+      <button class="btn btn-jump"  id="btn-jump"  aria-label="Jump">JUMP</button>
+    </div>
+  </div>
+
+  <div id="topbar">
+    <button class="tiny" id="btn-sound" aria-label="Toggle sound">SOUND ON</button>
+    <button class="tiny" id="btn-full" aria-label="Toggle full screen">FULL SCREEN</button>
+  </div>
+</div>
+
+<script src="levels.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
