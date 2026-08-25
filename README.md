@@ -63,6 +63,34 @@ Rules for editing:
    on the platform and drop back onto the danger.
 6. Save the file and refresh the page in the browser.
 
+### The easy way to build levels
+
+`levels.js` is also made by a small helper. Open `tools/genlevels.cjs`.
+Near the top there is a list called `specs`. You give it numbers, not pictures:
+
+```js
+{
+  name: 'First Steps',
+  width: 80,
+  ground: [[0, 19], [22, 49], [52, 79]],   // where the floor is
+  lava: [[20, 21], [50, 51]],              // where the lava is
+  plat11: [[8, 11]],                       // low platforms
+  plat9: [[29, 32]],                       // high platforms
+  coins10: [9, 10],                        // coins over the low platforms
+  coins8: [30, 31],                        // coins over the high platforms
+  row13: [[3, 'P'], [25, '^'], [35, 'Z'], [76, 'F']]
+}
+```
+
+Then run it:
+
+```powershell
+node tools\genlevels.cjs
+```
+
+It checks the 3 rules above for you. If you break one, it tells you which
+tile is wrong and does not save. If everything is fine it writes `levels.js`.
+
 ## Run it on your own computer
 
 You need a small web server, because browsers block local files.
@@ -82,3 +110,4 @@ Then open http://localhost:8000 in a browser.
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, drawing |
 | `levels.js` | The level maps |
+| `tools/genlevels.cjs` | Builds `levels.js` and checks your levels are possible |
