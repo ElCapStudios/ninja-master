@@ -344,8 +344,7 @@
 
   /* What the game remembers on this device: how far you got and your best
      score. It is kept in the browser, so it is still there tomorrow. */
-  /* V2 keeps its own save, so the old V1 game in /v1/ never loses your place. */
-  var SAVE_KEY = 'ninjaMasterSaveV2';
+  var SAVE_KEY = 'ninjaMasterSave';
   var progress = { max: 0, best: 0 };
 
   function loadProgress() {
