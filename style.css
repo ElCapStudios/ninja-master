@@ -85,6 +85,16 @@ html, body {
 .btn-jump  { background: rgba(60, 170, 90, 0.5);  font-size: 16px; }
 .btn-throw { background: rgba(200, 60, 60, 0.5);  font-size: 15px; }
 
+/* The ladder button sits low between left and right, and is smaller so
+   three buttons still fit across a small phone. */
+.btn-down {
+  width: 56px;
+  height: 56px;
+  font-size: 17px;
+  align-self: flex-end;
+  background: rgba(70, 90, 150, 0.5);
+}
+
 /* ---------- small buttons ---------- */
 
 #topbar {
@@ -126,13 +136,25 @@ body.touch #pad { display: block; }
 @media (max-height: 420px) {
   .btn { width: 62px; height: 62px; font-size: 19px; }
   .btn-jump, .btn-throw { font-size: 13px; }
+  .btn-down { width: 48px; height: 48px; font-size: 15px; }
 }
 
-/* On narrow phones the four buttons must not touch each other. */
-@media (max-width: 380px) {
-  .btn { width: 60px; height: 60px; font-size: 18px; }
+/* Five round buttons need room. Shrink them in two steps so they never
+   sit on top of each other, right down to a small old phone. */
+@media (max-width: 520px) {
+  .btn { width: 64px; height: 64px; font-size: 18px; }
   .btn-jump, .btn-throw { font-size: 12px; }
+  .btn-down { width: 50px; height: 50px; font-size: 15px; }
   .pad-side { gap: 10px; }
-  .pad-left  { left: calc(8px + env(safe-area-inset-left)); }
-  .pad-right { right: calc(8px + env(safe-area-inset-right)); }
+  .pad-left  { left: calc(10px + env(safe-area-inset-left)); }
+  .pad-right { right: calc(10px + env(safe-area-inset-right)); }
+}
+
+@media (max-width: 380px) {
+  .btn { width: 56px; height: 56px; font-size: 16px; }
+  .btn-jump, .btn-throw { font-size: 11px; }
+  .btn-down { width: 44px; height: 44px; font-size: 13px; }
+  .pad-side { gap: 8px; }
+  .pad-left  { left: calc(6px + env(safe-area-inset-left)); }
+  .pad-right { right: calc(6px + env(safe-area-inset-right)); }
 }

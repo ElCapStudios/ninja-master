@@ -1,46 +1,86 @@
-// Builds the level maps for Ninja Master and writes levels.js.
-//
-// How it works:
-//   1. There is a library of small hand made pieces called chunks.
-//      Every chunk starts and ends on plain flat ground, so any two
-//      chunks can be joined together and the join is always safe.
-//   2. Each level picks a list of chunks with a repeatable random
-//      number generator, so levels are long, busy and all different,
-//      but they come out the same every time you run this file.
-//   3. Power ups are dropped in afterwards, into safe empty spots.
-//   4. Every finished level is checked against the safety rules.
-//      If one rule is broken this file throws an error and writes nothing.
-//
-// Run it with:  node tools\genlevels.cjs
+/*
+ * Builds the 48 maps for Ninja Master and writes levels.js.
+ *
+ * How it works
+ *   1. A run level is made of small pieces called segments. Every segment
+ *      begins and ends on plain flat ground, so any two of them can be put
+ *      side by side and the join is always safe.
+ *   2. A maze level is made of a grid of rooms. A random tree says which
+ *      rooms are joined. A tree has only one way to each room, so the other
+ *      branches become dead ends that you must walk back out of.
+ *   3. Every finished level is played by a solver. The solver is a breadth
+ *      first search over tile states. Its moves are a little weaker than the
+ *      real game, so anything it can do the player can do too. If it cannot
+ *      reach the flag, the key and the three gems, the level is thrown away
+ *      and built again with the next seed.
+ *   4. All the random numbers come from a seed, so two runs give the same
+ *      levels.
+ *
+ * Run it with:  node tools\genlevels.cjs
+ */
+
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
 const OUT = path.join(__dirname, '..', 'levels.js');
 
-const H = 17;          // every level is 17 rows tall
-const GROUND_TOP = 14; // rows 14, 15 and 16 are the normal ground
-const STAND = 13;      // a thing that stands on the normal ground sits here
-
 // ---------------------------------------------------------------------------
-// characters
+// numbers that describe the game
 // ---------------------------------------------------------------------------
 
-const WALK_ENEMIES = ['Z', 'S', 'W', 'U', 'C', 'N', 'I'];
-const FLYERS = ['V', 'Y'];
-const STATIONARY = ['G'];
-const BOSSES = ['K', 'J', 'Q', 'D', 'X'];
-const ITEMS = ['H', 'M', '*', 'B', 'R'];
-const SOLID = ['#', '=', 'T'];
+const RUN_H = 17;        // a run level is one screen tall
+const ROOM_W = 15;       // a maze room is 15 tiles wide
+const ROOM_H = 17;       // and 17 tiles tall
 
-// Things that stand on the floor and hurt you. These must keep away from
-// the edge of a hole, or you land on them at the end of a jump.
-const GROUND_DANGER = ['^'].concat(WALK_ENEMIES);
+const RUN_FLOOR = 14;    // top row of the ground in a run level
+const RUN_STAND = 13;    // where a thing standing on that ground sits
 
-const WORLD_NAMES = ['Green Woods', 'Frost Peak', 'Sand Tomb', 'Fire Keep', 'Shadow Fort'];
-const WALKERS_BY_WORLD = [['Z', 'S'], ['W'], ['U', 'C'], ['I'], ['N']];
-const FLYERS_BY_WORLD = [[], ['V'], [], [], ['Y']];
-const BLOBS_BY_WORLD = [[], [], [], ['G'], []];
+// How far one jump carries you. Index is how many rows you climb.
+// These are smaller than the real game can do, on purpose.
+const MAXDX_UP = [4, 3, 3, 2];
+const MAXDX_WALL = [0, 3, 3, 2];
+const SPRING_RISE = 6;   // a spring lifts 7.6 rows, we only trust 6
+const SPRING_DX = 2;
+
+const SOLID_SET = '#=T/';
+
+// ---------------------------------------------------------------------------
+// the letters
+// ---------------------------------------------------------------------------
+
+const WORLD_NAMES = [
+  'Green Woods', 'Frost Peak', 'Sand Tomb', 'Fire Keep',
+  'Shadow Fort', 'Sky Temple', 'Deep Cave', 'Iron Works'
+];
+
+const ENEMIES = [
+  ['Z', 'S'], ['W', 'V'], ['U', 'C'], ['I', 'G'],
+  ['N', 'Y'], ['A', 'E'], ['L', 'O'], ['f', 'j']
+];
+const BOSSES = ['K', 'J', 'Q', 'D', 'X', '7', '8', '9'];
+const ALL_ENEMY_CH = 'ZSWVUCIGNYAELOfj';
+const ALL_BOSS_CH = 'KJQDX789';
+const WEAPONS = ['1', '2', '3', '4', '5', '6'];
+const LEGAL = '.#=^~T%+|/PFoHM*BRkg123456' + ALL_ENEMY_CH + ALL_BOSS_CH;
+
+// lava and deep water belong only to Fire Keep and Deep Cave
+const LAVA_WORLDS = [3, 6];
+
+const LEVEL_NAMES = [
+  ['Green Start', 'Log Hop', 'Root Maze', 'Deep Woods', 'Old Tree Halls', 'Skull King'],
+  ['Cold Start', 'Ice Slide', 'Frozen Halls', 'Snow Storm', 'Glacier Deeps', 'Frost Giant'],
+  ['Dry Dunes', 'Spike Sands', 'First Tomb', 'Sun Scorch', 'Lost Pyramid', 'Mummy Lord'],
+  ['Hot Rocks', 'Ash Path', 'Lava Vaults', 'Fire Bridge', 'Magma Keep', 'Fire Dragon'],
+  ['Dark Gate', 'Night Walk', 'Shadow Cells', 'Black Bridge', 'Fort Deeps', 'Shadow Master'],
+  ['Cloud Steps', 'Wind Run', 'Sky Vaults', 'High Winds', 'Temple Spires', 'Storm Bird'],
+  ['Cave Mouth', 'Crystal Run', 'Wet Tunnels', 'Deep Drop', 'Crystal Deeps', 'Crystal Queen'],
+  ['Iron Gate', 'Gear Run', 'Machine Halls', 'Steam Line', 'Iron Core', 'Iron Titan']
+];
+
+// which level of each world holds the one and only max up
+const MAXUP_LEVEL = [1, 3, 0, 4, 2, 3, 1, 4];
 
 // ---------------------------------------------------------------------------
 // random numbers we can repeat
@@ -55,1201 +95,1398 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-function pickOne(list, rng) {
-  return list[Math.floor(rng() * list.length) % list.length];
+function irnd(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)); }
+function pick(rng, list) { return list[Math.min(list.length - 1, Math.floor(rng() * list.length))]; }
+function shuffle(rng, list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// a drawing board for one chunk or one whole hand made level
+// grids
 // ---------------------------------------------------------------------------
 
-function canvas(name, width) {
-  const cells = [];
-  for (let r = 0; r < H; r++) cells.push(new Array(width).fill('.'));
-
-  function need(r, x, what) {
-    if (r < 0 || r >= H || x < 0 || x >= width) {
-      throw new Error(name + ': "' + what + '" at row ' + r + ' col ' + x + ' is off the map');
+function makeGrid(w, h, ch) {
+  const g = [];
+  for (let r = 0; r < h; r++) g.push(new Array(w).fill(ch));
+  return g;
+}
+function gridRows(g) { return g.map(function (row) { return row.join(''); }); }
+function toGrid(rows) { return rows.map(function (r) { return r.split(''); }); }
+function findAll(g, set) {
+  const out = [];
+  for (let y = 0; y < g.length; y++) {
+    for (let x = 0; x < g[y].length; x++) {
+      if (set.indexOf(g[y][x]) >= 0) out.push({ x: x, y: y, ch: g[y][x] });
     }
   }
-
-  const slots = [];
-
-  const api = {
-    name: name,
-    width: width,
-    cells: cells,
-    slots: slots,
-
-    fill: function (r0, r1, x0, x1, ch) {
-      for (let r = r0; r <= r1; r++) {
-        for (let x = x0; x <= x1; x++) {
-          need(r, x, ch);
-          cells[r][x] = ch;
-        }
-      }
-    },
-
-    // put one thing down. Two things may never share a cell.
-    put: function (r, x, ch) {
-      need(r, x, ch);
-      if (cells[r][x] !== '.') {
-        throw new Error(name + ': two things share row ' + r + ' col ' + x);
-      }
-      cells[r][x] = ch;
-    },
-
-    ground: function (x0, x1, top) { api.fill(top, H - 1, x0, x1, '#'); },
-    carve: function (x0, x1) { api.fill(GROUND_TOP, H - 1, x0, x1, '.'); },
-    lava: function (x0, x1) { api.fill(GROUND_TOP, H - 1, x0, x1, '~'); },
-    plat: function (r, x0, x1) { for (let x = x0; x <= x1; x++) api.put(r, x, '='); },
-    coins: function (r, x0, x1) { for (let x = x0; x <= x1; x++) api.put(r, x, 'o'); },
-    coin: function (r, x) { api.put(r, x, 'o'); },
-    spikes: function (x0, x1) { for (let x = x0; x <= x1; x++) api.put(STAND, x, '^'); },
-
-    // a good empty place for a power up, saved for later
-    slot: function (r, x) { slots.push([r, x]); }
-  };
-
-  api.ground(0, width - 1, GROUND_TOP);
-  return api;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// the chunk library
+// the solver
 // ---------------------------------------------------------------------------
 //
-// Chunk contract, checked by checkChunk below:
-//   - the first 2 and the last 2 columns are plain ground with clear air
-//     above them, so joins are always safe;
-//   - nothing that hurts you lives in the first 3 or the last 3 columns;
-//   - holes, lava and platforms stay inside the middle of the chunk.
-
-function chunk(name, width, tags, build) {
-  return { name: name, width: width, tags: tags, build: build };
-}
-
-const CHUNKS = [
-  chunk('coin-arc', 14, ['coin', 'easy'], function (a) {
-    a.coin(12, 3); a.coin(11, 4); a.coin(10, 5);
-    a.coin(10, 6); a.coin(11, 7); a.coin(12, 8);
-    a.plat(11, 9, 11);
-  }),
-
-  chunk('hop-two', 12, ['hole', 'easy'], function (a) {
-    a.carve(5, 6);
-    a.coins(12, 5, 6);
-  }),
-
-  chunk('hop-three', 16, ['hole'], function (a) {
-    a.carve(8, 10);
-    a.coins(12, 8, 10);
-    a.plat(11, 2, 5); a.coins(10, 2, 5);
-  }),
-
-  chunk('lava-small', 13, ['lava'], function (a) {
-    a.lava(5, 6);
-    a.coins(12, 5, 6);
-  }),
-
-  chunk('lava-wide', 16, ['lava'], function (a) {
-    a.lava(7, 9);
-    a.coins(12, 7, 9);
-    a.plat(11, 2, 4); a.coins(10, 2, 4);
-  }),
-
-  chunk('lava-pair', 18, ['lava'], function (a) {
-    a.lava(4, 5); a.lava(10, 11);
-    a.coins(12, 4, 5); a.coins(12, 10, 11);
-    a.plat(11, 14, 15); a.coins(10, 14, 15);
-  }),
-
-  chunk('lava-step', 16, ['lava', 'step'], function (a) {
-    a.lava(5, 6);
-    a.ground(9, 13, 12);
-    a.coins(12, 5, 6);
-    a.coins(11, 10, 12);
-  }),
-
-  chunk('step-up', 14, ['step', 'easy'], function (a) {
-    a.ground(5, 9, 12);
-    a.coins(11, 6, 8);
-  }),
-
-  chunk('staircase', 18, ['step'], function (a) {
-    const tops = [13, 13, 12, 12, 11, 11, 10, 10, 10, 11, 11, 12, 12, 13];
-    for (let i = 0; i < tops.length; i++) a.ground(2 + i, 2 + i, tops[i]);
-    a.coins(9, 8, 10);
-    a.coins(11, 4, 5);
-  }),
-
-  chunk('spikes-side-plat', 16, ['spike'], function (a) {
-    a.spikes(8, 9);
-    a.coins(12, 8, 9);
-    a.plat(11, 2, 5); a.coins(10, 3, 5);
-  }),
-
-  chunk('spike-pair', 20, ['spike', 'hard'], function (a) {
-    a.spikes(5, 6); a.spikes(11, 12);
-    a.coins(12, 5, 6); a.coins(12, 11, 12);
-    a.plat(11, 15, 17); a.coins(10, 15, 17);
-  }),
-
-  chunk('low-plat', 14, ['plat', 'coin'], function (a) {
-    a.plat(11, 3, 8); a.coins(10, 3, 8);
-    a.coins(13, 10, 11);
-  }),
-
-  chunk('plat-stack', 16, ['plat'], function (a) {
-    a.plat(11, 2, 5); a.coins(10, 2, 5);
-    a.plat(9, 8, 12); a.coins(8, 8, 12);
-  }),
-
-  chunk('tower', 18, ['plat', 'item'], function (a) {
-    a.plat(11, 3, 6); a.coins(10, 3, 4);
-    a.plat(9, 7, 10); a.coins(8, 7, 8);
-    a.plat(7, 11, 14); a.coins(6, 11, 12);
-    a.slot(6, 14);
-  }),
-
-  chunk('spring-high', 14, ['spring', 'item'], function (a) {
-    a.put(STAND, 6, 'T');
-    a.plat(5, 4, 8);
-    a.coins(4, 4, 5); a.coins(4, 7, 8);
-    a.slot(4, 6);
-  }),
-
-  chunk('spring-pit', 16, ['spring', 'hole'], function (a) {
-    a.carve(4, 6);
-    a.coins(12, 4, 6);
-    a.put(STAND, 10, 'T');
-    a.plat(5, 9, 12); a.coins(4, 9, 12);
-  }),
-
-  chunk('spring-plats', 18, ['spring', 'plat'], function (a) {
-    a.put(STAND, 5, 'T');
-    a.plat(5, 3, 7); a.coins(4, 3, 7);
-    a.plat(11, 10, 14); a.coins(10, 10, 14);
-  }),
-
-  chunk('enemy-flat', 14, ['enemy'], function (a, ctx) {
-    a.put(STAND, 7, ctx.walker());
-    a.coins(13, 10, 11);
-  }),
-
-  chunk('enemy-pair', 18, ['enemy', 'hard'], function (a, ctx) {
-    a.put(STAND, 6, ctx.walker());
-    a.put(STAND, 11, ctx.walker());
-    a.coins(12, 2, 3);
-    a.plat(11, 14, 15); a.coins(10, 14, 15);
-  }),
-
-  chunk('enemy-block', 16, ['enemy', 'step'], function (a, ctx) {
-    a.ground(5, 10, 12);
-    a.put(11, 8, ctx.walker());
-    a.coins(11, 5, 6);
-  }),
-
-  chunk('enemy-pit', 18, ['enemy', 'hole'], function (a, ctx) {
-    a.carve(8, 10);
-    a.coins(12, 8, 10);
-    a.put(STAND, 14, ctx.walker());
-    a.plat(11, 2, 5); a.coins(10, 2, 5);
-  }),
-
-  chunk('flyer-hole', 16, ['flyer', 'hole'], function (a, ctx) {
-    a.carve(8, 10);
-    a.coins(12, 8, 10);
-    a.put(9, 9, ctx.flyer());
-    a.plat(11, 2, 5); a.coins(10, 2, 5);
-  }),
-
-  chunk('flyer-flat', 14, ['flyer'], function (a, ctx) {
-    a.put(10, 6, ctx.flyer());
-    a.coins(12, 2, 4);
-  }),
-
-  chunk('flyer-plat', 18, ['flyer', 'plat'], function (a, ctx) {
-    a.put(8, 8, ctx.flyer());
-    a.plat(11, 3, 6); a.coins(10, 3, 6);
-    a.plat(11, 11, 14); a.coins(10, 11, 14);
-  }),
-
-  chunk('gauntlet', 20, ['hole', 'hard'], function (a) {
-    a.carve(4, 5); a.carve(9, 10); a.carve(14, 15);
-    a.coins(12, 4, 5); a.coins(12, 14, 15);
-  }),
-
-  chunk('coin-room', 18, ['coin', 'plat'], function (a) {
-    a.plat(11, 3, 7); a.coins(10, 3, 7);
-    a.plat(9, 9, 14); a.coins(8, 9, 14);
-  }),
-
-  chunk('rest-stop', 13, ['rest', 'item', 'easy'], function (a) {
-    a.coins(12, 3, 5);
-    a.slot(STAND, 8);
-    a.coins(12, 9, 10);
-  }),
-
-  chunk('mixed-trouble', 18, ['spike', 'enemy', 'hard'], function (a, ctx) {
-    a.put(STAND, 5, ctx.walker());
-    a.spikes(10, 11);
-    a.coins(12, 10, 11);
-    a.plat(11, 14, 15); a.coins(10, 14, 15);
-  }),
-
-  chunk('lava-blob', 16, ['lava', 'blob'], function (a, ctx) {
-    a.lava(7, 9);
-    a.put(STAND, 8, ctx.blob());
-    a.coin(11, 7); a.coin(11, 9);
-    a.plat(11, 2, 4); a.coins(10, 2, 4);
-  }),
-
-  chunk('blob-flat', 14, ['blob'], function (a, ctx) {
-    a.put(STAND, 7, ctx.blob());
-    a.coins(12, 2, 4);
-  }),
-
-  chunk('long-plats', 20, ['plat', 'coin'], function (a) {
-    a.plat(11, 2, 7); a.coins(10, 2, 7);
-    a.plat(9, 9, 13); a.coins(8, 9, 13);
-    a.plat(11, 15, 17); a.coins(10, 15, 17);
-  }),
-
-  chunk('coin-hill', 16, ['step', 'coin', 'easy'], function (a) {
-    a.ground(4, 11, 13);
-    a.coins(12, 5, 9);
-  }),
-
-  chunk('two-holes-plat', 18, ['hole', 'plat'], function (a) {
-    a.carve(3, 4); a.carve(13, 14);
-    a.coins(12, 3, 4);
-    a.plat(11, 8, 10); a.coins(10, 8, 10);
-  }),
-
-  chunk('zigzag', 20, ['plat'], function (a) {
-    a.plat(11, 2, 4);
-    a.plat(9, 6, 8); a.coins(8, 6, 8);
-    a.plat(11, 10, 12);
-    a.plat(9, 14, 17); a.coins(8, 14, 17);
-  }),
-
-  chunk('spike-step', 16, ['spike', 'step'], function (a) {
-    a.ground(8, 13, 12);
-    a.spikes(4, 5);
-    a.coins(12, 4, 5);
-    a.coins(11, 9, 12);
-  }),
-
-  chunk('mini-coins', 9, ['filler', 'coin', 'easy'], function (a) {
-    a.coins(12, 3, 6);
-  }),
-
-  chunk('mini-hole', 10, ['filler', 'hole'], function (a) {
-    a.carve(4, 5);
-    a.coins(12, 4, 5);
-  }),
-
-  chunk('mini-step', 10, ['filler', 'step'], function (a) {
-    a.ground(4, 6, 13);
-    a.coins(12, 4, 6);
-  })
-];
-
-// How much each world likes each kind of chunk. A zero means never.
-const WORLD_BIAS = [
-  // world 0, Green Woods: gentle, lots of coins and small hops
-  { easy: 3, coin: 2, plat: 2, step: 2, hole: 1.5, enemy: 1.5, spike: 0.4,
-    lava: 0.1, spring: 0.6, flyer: 0, blob: 0, hard: 0.3, rest: 1, item: 1, filler: 1 },
-  // world 1, Frost Peak: springs, platforms and bats
-  { easy: 1, coin: 1, plat: 2.5, step: 1, hole: 1.5, enemy: 1, spike: 0.6,
-    lava: 0.3, spring: 3, flyer: 3, blob: 0, hard: 0.8, rest: 1, item: 1.5, filler: 1 },
-  // world 2, Sand Tomb: spikes, slow mummies and coin rooms
-  { easy: 0.8, coin: 2, plat: 1.2, step: 2, hole: 1.2, enemy: 2, spike: 3,
-    lava: 0.5, spring: 0.8, flyer: 0, blob: 0, hard: 1.2, rest: 1, item: 1, filler: 1 },
-  // world 3, Fire Keep: lava and lava blobs
-  { easy: 0.6, coin: 1, plat: 1, step: 1, hole: 1.2, enemy: 1.5, spike: 1.2,
-    lava: 3, spring: 1, flyer: 0, blob: 3, hard: 1.5, rest: 0.8, item: 1, filler: 1 },
-  // world 4, Shadow Fort: ghosts, dart ninjas and long platform runs
-  { easy: 0.5, coin: 1, plat: 2.5, step: 1, hole: 1.5, enemy: 2, spike: 1.5,
-    lava: 1, spring: 1.2, flyer: 3, blob: 0, hard: 2, rest: 0.8, item: 1, filler: 1 }
-];
-
-function chunkWeight(c, world) {
-  const bias = WORLD_BIAS[world];
-  let sum = 0;
-  for (let i = 0; i < c.tags.length; i++) {
-    const m = bias[c.tags[i]] === undefined ? 1 : bias[c.tags[i]];
-    if (m === 0) return 0;
-    sum += m;
-  }
-  return sum / c.tags.length;
-}
-
-// ---------------------------------------------------------------------------
-// building one chunk
-// ---------------------------------------------------------------------------
-
-function buildChunk(c, ctx) {
-  const a = canvas(c.name, c.width);
-  c.build(a, ctx);
-  checkChunk(a, c);
-  return a;
-}
-
-function checkChunk(a, c) {
-  const w = a.width;
-  const cells = a.cells;
-  const edge = [0, 1, w - 2, w - 1];
-  edge.forEach(function (x) {
-    for (let r = 0; r < H; r++) {
-      const want = r >= GROUND_TOP ? '#' : '.';
-      if (cells[r][x] !== want) {
-        throw new Error(c.name + ': edge column ' + x + ' must be plain ground, found "' + cells[r][x] + '"');
-      }
-    }
-  });
-  for (let x = 0; x < w; x++) {
-    for (let r = 0; r < H; r++) {
-      const ch = cells[r][x];
-      if (GROUND_DANGER.indexOf(ch) >= 0 && (x < 3 || x > w - 4)) {
-        throw new Error(c.name + ': danger "' + ch + '" too close to the chunk edge at col ' + x);
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// reading a finished grid
-// ---------------------------------------------------------------------------
-
-function isSolid(ch) { return SOLID.indexOf(ch) >= 0; }
-
-// true when you can stand on this column
-function supported(cells, x) {
-  for (let r = GROUND_TOP; r < H; r++) {
-    if (cells[r][x] === '#' || cells[r][x] === 'T') return true;
-  }
-  return false;
-}
-
-// the row you stand on in this column, or null for a hole or lava
-function groundTop(cells, x) {
-  if (!supported(cells, x)) return null;
-  let r = H - 1;
-  while (r >= 0 && (cells[r][x] === '#' || cells[r][x] === 'T')) r--;
-  return r + 1;
-}
-
-function findAll(cells, wanted) {
-  const found = [];
-  for (let r = 0; r < H; r++) {
-    for (let x = 0; x < cells[r].length; x++) {
-      if (wanted.indexOf(cells[r][x]) >= 0) found.push([r, x, cells[r][x]]);
-    }
-  }
-  return found;
-}
-
-function gapRuns(cells, width) {
-  const runs = [];
-  let start = -1;
-  for (let x = 0; x < width; x++) {
-    if (!supported(cells, x)) {
-      if (start < 0) start = x;
-    } else if (start >= 0) {
-      runs.push([start, x - 1]);
-      start = -1;
-    }
-  }
-  if (start >= 0) runs.push([start, width - 1]);
-  return runs;
-}
-
-// ---------------------------------------------------------------------------
-// the safety rules
-// ---------------------------------------------------------------------------
-
-function checkLevel(level) {
-  const name = level.name;
-  const cells = level.cells;
-  const W = cells[0].length;
-  const bad = function (msg) { throw new Error(name + ': ' + msg); };
-
-  // rule 11: 17 rows, all the same length
-  if (cells.length !== H) bad('has ' + cells.length + ' rows, needs ' + H);
-  cells.forEach(function (row, r) {
-    if (row.length !== W) bad('row ' + r + ' is ' + row.length + ' wide, needs ' + W);
-  });
-
-  // rule 1: a hole or lava run is 3 columns or less
-  const runs = gapRuns(cells, W);
-  let worstGap = 0;
-  runs.forEach(function (run) {
-    const size = run[1] - run[0] + 1;
-    if (size > worstGap) worstGap = size;
-    if (size > 3) bad('a gap of ' + size + ' columns at ' + run[0] + ' is too wide');
-  });
-
-  // extra rule: never more than 2 spikes in a row, so one jump clears them
-  for (let r = 0; r < H; r++) {
-    let run = 0;
-    for (let x = 0; x < W; x++) {
-      run = cells[r][x] === '^' ? run + 1 : 0;
-      if (run > 2) bad('more than 2 spikes in a row at col ' + x);
-    }
-  }
-
-  // rules 2 and 3: floor dangers keep away from holes and from platforms
-  findAll(cells, GROUND_DANGER).forEach(function (item) {
-    const r = item[0], x = item[1], ch = item[2];
-    for (let i = x - 3; i <= x + 3; i++) {
-      if (i < 0 || i >= W) continue;
-      if (!supported(cells, i)) bad('"' + ch + '" at col ' + x + ' is too near a hole');
-    }
-    for (let i = x - 2; i <= x + 2; i++) {
-      if (i < 0 || i >= W) continue;
-      for (let rr = 0; rr < r; rr++) {
-        if (cells[rr][i] === '=') bad('a platform sits above "' + ch + '" at col ' + x);
-      }
-    }
-  });
-
-  // rule 4: no platform above a hole or lava
-  findAll(cells, ['=']).forEach(function (item) {
-    if (!supported(cells, item[1])) bad('a platform at col ' + item[1] + ' hangs over a hole or lava');
-  });
-
-  // rule 5: the floor never steps more than 2 rows at once
-  for (let x = 0; x + 1 < W; x++) {
-    const a = groundTop(cells, x), b = groundTop(cells, x + 1);
-    if (a !== null && b !== null && Math.abs(a - b) > 2) {
-      bad('the floor jumps ' + Math.abs(a - b) + ' rows between col ' + x + ' and ' + (x + 1));
-    }
-  }
-  runs.forEach(function (run) {
-    if (run[0] === 0 || run[1] === W - 1) return;
-    const a = groundTop(cells, run[0] - 1), b = groundTop(cells, run[1] + 1);
-    if (Math.abs(a - b) > 2) bad('the floor jumps ' + Math.abs(a - b) + ' rows across the hole at col ' + run[0]);
-  });
-
-  // extra rule: room to walk, and room to jump near a hole
-  for (let x = 0; x < W; x++) {
-    const top = groundTop(cells, x);
-    if (top === null) continue;
-    for (let i = 1; i <= 2; i++) {
-      if (top - i >= 0 && isSolid(cells[top - i][x])) bad('no room to walk at col ' + x);
-    }
-  }
-  runs.forEach(function (run) {
-    for (let x = run[0] - 2; x <= run[1] + 2; x++) {
-      if (x < 0 || x >= W) continue;
-      const top = groundTop(cells, x);
-      if (top === null) continue;
-      for (let i = 1; i <= 4; i++) {
-        if (top - i >= 0 && isSolid(cells[top - i][x])) bad('no room to jump the hole at col ' + x);
-      }
-    }
-  });
-
-  // rule 9: a spring stands on the ground with 7 clear rows above it
-  findAll(cells, ['T']).forEach(function (item) {
-    const r = item[0], x = item[1];
-    if (r + 1 >= H || cells[r + 1][x] !== '#') bad('the spring at col ' + x + ' has no ground under it');
-    for (let i = 1; i <= 7; i++) {
-      if (r - i >= 0 && isSolid(cells[r - i][x])) bad('the spring at col ' + x + ' is blocked above');
-    }
-  });
-
-  // rule 7: one start, one flag or one boss
-  const starts = findAll(cells, ['P']);
-  const flags = findAll(cells, ['F']);
-  const bosses = findAll(cells, BOSSES);
-  if (starts.length !== 1) bad('needs exactly one P, found ' + starts.length);
-  if (level.boss) {
-    if (bosses.length !== 1) bad('a boss level needs exactly one boss, found ' + bosses.length);
-    if (flags.length !== 0) bad('a boss level must not have a flag');
-  } else {
-    if (flags.length !== 1) bad('needs exactly one F, found ' + flags.length);
-    if (bosses.length !== 0) bad('a normal level must not have a boss');
-  }
-
-  const px = starts[0][1];
-  if (cells[starts[0][0] + 1][px] !== '#') bad('P has no ground under it');
-
-  // rule 10: nothing at all near the start
-  for (let i = px - 3; i <= px + 3; i++) {
-    if (i < 0 || i >= W) continue;
-    for (let r = 0; r < H; r++) {
-      const ch = cells[r][i];
-      if (ch === '.' || ch === '#' || (r === starts[0][0] && i === px)) continue;
-      bad('"' + ch + '" is too close to the start at col ' + i);
-    }
-  }
-
-  // rule 10: nothing dangerous near the flag
-  const nasty = GROUND_DANGER.concat(FLYERS, STATIONARY, BOSSES, ['~']);
-  if (flags.length) {
-    const fx = flags[0][1];
-    if (cells[flags[0][0] + 1][fx] !== '#') bad('F has no ground under it');
-    for (let i = fx - 3; i <= fx + 3; i++) {
-      if (i < 0 || i >= W) continue;
-      for (let r = 0; r < H; r++) {
-        if (nasty.indexOf(cells[r][i]) >= 0) bad('something nasty is too close to the flag at col ' + i);
-      }
-    }
-  }
-
-  // rule 8: flying things and blobs keep away from the start and the flag
-  findAll(cells, FLYERS.concat(STATIONARY)).forEach(function (item) {
-    const x = item[1];
-    if (Math.abs(x - px) <= 3) bad('"' + item[2] + '" is too close to the start at col ' + x);
-    if (flags.length && Math.abs(x - flags[0][1]) <= 3) {
-      bad('"' + item[2] + '" is too close to the flag at col ' + x);
-    }
-  });
-
-  // rule 6: a star sits in the middle of a normal level
-  if (!level.boss) {
-    findAll(cells, ['*']).forEach(function (item) {
-      const frac = item[1] / W;
-      if (frac < 0.35 || frac > 0.65) {
-        bad('a star at col ' + item[1] + ' is not in the middle (' + Math.round(frac * 100) + ' percent)');
-      }
-    });
-  }
-
-  // boss levels need a big clear arena
-  if (level.boss) {
-    const bx = bosses[0][1];
-    for (let i = bx - 10; i <= bx + 10; i++) {
-      if (i < 0 || i >= W) bad('the boss arena runs off the map at col ' + i);
-      for (let r = 0; r < H; r++) {
-        const ch = cells[r][i];
-        const want = r >= GROUND_TOP ? '#' : '.';
-        if (ch !== want && !(r === bosses[0][0] && i === bx)) {
-          bad('the boss arena is not clear at row ' + r + ' col ' + i);
-        }
-      }
-    }
-  }
-
-  // the ground route must work for a bot that runs right and jumps
-  botWalk(level, cells, W, px, flags.length ? flags[0][1] : bosses[0][1], bad);
-
-  return worstGap;
-}
-
-// A very simple bot. It walks right on the ground, steps up 2 rows at most
-// and jumps over holes of 3 columns at most.
-function botWalk(level, cells, W, from, to, bad) {
-  let x = from;
-  let guard = 0;
-  while (x < to) {
-    if (guard++ > W * 2) bad('the bot got stuck at col ' + x);
-    const here = groundTop(cells, x);
-    let next = x + 1;
-    while (next < W && !supported(cells, next)) next++;
-    if (next >= W) bad('the bot fell off the end at col ' + x);
-    if (next - x - 1 > 3) bad('the bot cannot jump ' + (next - x - 1) + ' columns at col ' + x);
-    const there = groundTop(cells, next);
-    if (here !== null && there !== null && there < here - 2) {
-      bad('the bot cannot climb ' + (here - there) + ' rows at col ' + next);
-    }
-    x = next;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// power ups
-// ---------------------------------------------------------------------------
-
-function itemSpots(cells, W, extraSlots) {
-  const spots = [];
-  const dangerCols = [];
-  findAll(cells, GROUND_DANGER.concat(FLYERS, STATIONARY, ['~'])).forEach(function (d) {
-    dangerCols.push(d[1]);
-  });
-  const nearDanger = function (x) {
-    for (let i = 0; i < dangerCols.length; i++) {
-      if (Math.abs(dangerCols[i] - x) <= 3) return true;
-    }
-    return false;
-  };
-  const startCol = findAll(cells, ['P'])[0][1];
-  const flag = findAll(cells, ['F']);
-  const flagCol = flag.length ? flag[0][1] : -99;
-  const tooNearEnds = function (x) {
-    return Math.abs(x - startCol) <= 6 || Math.abs(x - flagCol) <= 5;
-  };
-
-  extraSlots.forEach(function (s) {
-    if (cells[s[0]][s[1]] === '.' && !tooNearEnds(s[1]) && !nearDanger(s[1])) {
-      spots.push({ r: s[0], x: s[1], kind: 'slot' });
-    }
-  });
-
-  for (let x = 2; x < W - 2; x++) {
-    if (tooNearEnds(x) || nearDanger(x)) continue;
-    const top = groundTop(cells, x);
-    if (top === null) continue;
-    let solidNear = true;
-    for (let i = x - 2; i <= x + 2; i++) {
-      if (i < 0 || i >= W || groundTop(cells, i) !== top) solidNear = false;
-    }
-    const r = top - 1;
-    if (solidNear && cells[r][x] === '.' && cells[r][x - 1] === '.' && cells[r][x + 1] === '.') {
-      spots.push({ r: r, x: x, kind: 'ground' });
-    }
-    for (let rr = 4; rr < GROUND_TOP; rr++) {
-      if (cells[rr][x] === '=' && cells[rr - 1][x] === '.' &&
-          cells[rr - 1][x - 1] === '.' && cells[rr - 1][x + 1] === '.') {
-        spots.push({ r: rr - 1, x: x, kind: 'plat' });
-      }
-    }
-  }
-  return spots;
-}
-
-function placeItem(level, spots, taken, ch, wants, rng) {
-  const tries = [
-    function (s) { return wants(s) && far(s.x, taken, 10); },
-    function (s) { return wants(s) && far(s.x, taken, 6); },
-    function (s) { return wants(s) && far(s.x, taken, 3); }
-  ];
-  for (let t = 0; t < tries.length; t++) {
-    const ok = spots.filter(tries[t]);
-    if (ok.length) {
-      const pick = ok[Math.floor(rng() * ok.length) % ok.length];
-      level.cells[pick.r][pick.x] = ch;
-      taken.push(pick.x);
-      const i = spots.indexOf(pick);
-      spots.splice(i, 1);
-      return pick;
-    }
-  }
-  throw new Error(level.name + ': found nowhere to put "' + ch + '"');
-}
-
-function far(x, taken, gap) {
-  for (let i = 0; i < taken.length; i++) if (Math.abs(taken[i] - x) < gap) return false;
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// more baddies
-// ---------------------------------------------------------------------------
+// A state is one tile, plus a mode, plus whether we carry the key.
+//   mode 0  standing on the ground or holding a ladder
+//   mode 1  hanging on a wall, ready to wall jump
 //
-// The chunks alone can leave a level a bit quiet, so we top the baddies up
-// afterwards. Every new baddy is only dropped into a spot that already obeys
-// all the safety rules.
+// Solid: # = T / and + while we have no key.  Deadly: ^ and ~.
 
-const ENEMY_PACE = [36, 32, 28, 27, 25]; // one baddy per this many columns
+function makeSolver(rows) {
+  const H = rows.length;
+  const W = rows[0].length;
 
-function walkerSpots(cells, W) {
-  const spots = [];
-  const busy = [];
-  findAll(cells, GROUND_DANGER.concat(FLYERS, STATIONARY, ITEMS, ['T'])).forEach(function (d) {
-    busy.push(d[1]);
-  });
-  const startCol = findAll(cells, ['P'])[0][1];
-  const flag = findAll(cells, ['F']);
-  const flagCol = flag.length ? flag[0][1] : -99;
-
-  for (let x = 4; x < W - 4; x++) {
-    if (Math.abs(x - startCol) <= 10 || Math.abs(x - flagCol) <= 6) continue;
-    let clash = false;
-    busy.forEach(function (b) { if (Math.abs(b - x) <= 4) clash = true; });
-    if (clash) continue;
-
-    const top = groundTop(cells, x);
-    if (top === null) continue;
-
-    // flat and solid all around, so the baddy cannot fall in a hole
-    let flat = true;
-    for (let i = x - 3; i <= x + 3; i++) {
-      if (i < 0 || i >= W || !supported(cells, i)) flat = false;
-    }
-    for (let i = x - 2; i <= x + 2; i++) {
-      if (i < 0 || i >= W || groundTop(cells, i) !== top) flat = false;
-    }
-    if (!flat) continue;
-
-    // no platform anywhere above it, or you bonk your head and drop on it
-    let roof = false;
-    for (let i = x - 2; i <= x + 2; i++) {
-      for (let r = 0; r < top - 1; r++) if (cells[r][i] === '=') roof = true;
-    }
-    if (roof) continue;
-
-    const r = top - 1;
-    if (cells[r][x] !== '.' || cells[r][x - 1] !== '.' || cells[r][x + 1] !== '.') continue;
-    spots.push({ r: r, x: x });
+  function at(x, y) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return '#';
+    return rows[y][x];
   }
-  return spots;
-}
+  function solidCh(c, key) {
+    return c === '#' || c === '=' || c === 'T' || c === '/' || (c === '+' && !key);
+  }
+  function solid(x, y, key) { return solidCh(at(x, y), key); }
+  function free(x, y, key) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return false;
+    const c = rows[y][x];
+    return !solidCh(c, key) && c !== '^' && c !== '~';
+  }
+  function ladder(x, y) { return at(x, y) === '|'; }
+  function rest(x, y, key) {
+    return free(x, y, key) && (solid(x, y + 1, key) || ladder(x, y));
+  }
+  function cling(x, y, key) {
+    if (!free(x, y, key)) return false;
+    if (solid(x, y + 1, key) || ladder(x, y)) return false;
+    return solid(x - 1, y, key) || solid(x + 1, y, key);
+  }
 
-function flyerSpots(cells, W) {
-  const spots = [];
-  const startCol = findAll(cells, ['P'])[0][1];
-  const flag = findAll(cells, ['F']);
-  const flagCol = flag.length ? flag[0][1] : -99;
-  const busy = [];
-  findAll(cells, FLYERS.concat(STATIONARY)).forEach(function (d) { busy.push(d[1]); });
+  // The flight path of a jump: straight up out of the start tile, across at
+  // the top, then down on to the landing tile. R is how many rows we climb
+  // before crossing, which also stands for the head room the jump needs.
+  function pathOk(x, y, nx, ny, key, R) {
+    const top = y - R;
+    if (top < 0) return false;
+    for (let r = y - 1; r >= top; r--) if (!free(x, r, key)) return false;
+    const lo = Math.min(x, nx), hi = Math.max(x, nx);
+    const midLow = Math.min(y - 1, ny);
+    for (let mx = lo + 1; mx < hi; mx++) {
+      for (let r = top; r <= midLow; r++) if (!free(mx, r, key)) return false;
+    }
+    for (let r = top; r <= ny; r++) if (!free(nx, r, key)) return false;
+    return true;
+  }
 
-  for (let x = 4; x < W - 4; x++) {
-    if (Math.abs(x - startCol) <= 10 || Math.abs(x - flagCol) <= 6) continue;
-    let clash = false;
-    busy.forEach(function (b) { if (Math.abs(b - x) <= 5) clash = true; });
-    if (clash) continue;
-    [9, 8, 10].forEach(function (r) {
-      if (spots.length && spots[spots.length - 1].x === x) return;
-      let clear = true;
-      for (let i = x - 1; i <= x + 1; i++) {
-        for (let rr = r - 1; rr <= r + 1; rr++) {
-          if (cells[rr][i] !== '.') clear = false;
+  function landing(x, y, key, nx, ny, R, push) {
+    if (!pathOk(x, y, nx, ny, key, R)) return;
+    if (rest(nx, ny, key)) push(nx, ny, 0);
+    else if (cling(nx, ny, key)) push(nx, ny, 1);
+  }
+
+  function moves(x, y, mode, key, push) {
+    if (mode === 0) {
+      if (rest(x - 1, y, key)) push(x - 1, y, 0);
+      if (rest(x + 1, y, key)) push(x + 1, y, 0);
+
+      if (ladder(x, y - 1) && free(x, y - 1, key)) push(x, y - 1, 0);
+      if (ladder(x, y) && ladder(x, y + 1)) push(x, y + 1, 0);
+
+      for (let u = 0; u <= 3; u++) {
+        const ny = y - u;
+        const m = MAXDX_UP[u];
+        for (let dx = -m; dx <= m; dx++) {
+          if (dx === 0 && u === 0) continue;
+          const R = Math.max(u + 1, Math.abs(dx), 1);
+          landing(x, y, key, x + dx, ny, R, push);
         }
       }
-      if (clear) spots.push({ r: r, x: x });
-    });
-  }
-  return spots;
-}
 
-function topUpEnemies(level, ctx, rng) {
-  const cells = level.cells;
-  const W = level.width;
-  const world = level.world;
-  const want = Math.round(W / ENEMY_PACE[world]);
-  const flyers = FLYERS_BY_WORLD[world];
-  const blobs = BLOBS_BY_WORLD[world];
+      for (let d = -1; d <= 1; d += 2) {
+        for (let k = 1; k <= 4; k++) {
+          const nx = x + d * k;
+          if (k > 1 && !free(x + d * (k - 1), y, key)) break;
+          for (let ny = y + 1; ny < H; ny++) {
+            if (!free(nx, ny, key)) break;
+            if (rest(nx, ny, key) || cling(nx, ny, key)) {
+              landing(x, y, key, nx, ny, Math.max(k, 1), push);
+            }
+          }
+        }
+      }
 
-  let have = countChars(cells, WALK_ENEMIES.concat(FLYERS, STATIONARY));
-  let guard = 0;
-  while (have < want && guard++ < 60) {
-    const wantFlyer = flyers.length && rng() < 0.35;
-    const wantBlob = blobs.length && rng() < 0.3;
-    let placed = false;
+      if (at(x, y + 1) === 'T') {
+        for (let u = 1; u <= SPRING_RISE; u++) {
+          for (let dx = -SPRING_DX; dx <= SPRING_DX; dx++) {
+            const R = Math.max(u + 1, Math.abs(dx), 1);
+            landing(x, y, key, x + dx, y - u, R, push);
+          }
+        }
+      }
+      return;
+    }
 
-    if (wantFlyer) {
-      const spots = flyerSpots(cells, W);
-      if (spots.length) {
-        const s = spots[Math.floor(rng() * spots.length) % spots.length];
-        cells[s.r][s.x] = ctx.flyer();
-        placed = true;
+    const wallLeft = solid(x - 1, y, key);
+    const wallRight = solid(x + 1, y, key);
+    for (let rise = 1; rise <= 3; rise++) {
+      const m = MAXDX_WALL[rise];
+      for (let d = -1; d <= 1; d += 2) {
+        if (d < 0 && !wallRight) continue;
+        if (d > 0 && !wallLeft) continue;
+        for (let k = 1; k <= m; k++) {
+          const R = Math.max(rise + 1, k);
+          landing(x, y, key, x + d * k, y - rise, R, push);
+        }
       }
     }
-    if (!placed) {
-      const spots = walkerSpots(cells, W);
-      if (!spots.length) break;
-      const s = spots[Math.floor(rng() * spots.length) % spots.length];
-      cells[s.r][s.x] = wantBlob ? ctx.blob() : ctx.walker();
-      placed = true;
+    for (let d = -1; d <= 1; d++) {
+      for (let ny = y + 1; ny < H; ny++) {
+        const nx = x + d;
+        if (!free(nx, ny, key)) break;
+        if (rest(nx, ny, key) || cling(nx, ny, key)) {
+          landing(x, y, key, nx, ny, 1, push);
+        }
+      }
     }
-    if (!placed) break;
-    have++;
   }
-  return have;
+
+  return { W: W, H: H, at: at, rest: rest, moves: moves };
 }
 
-// Which normal level in each world gets which treat.
-const STAR_PLAN = [
-  [false, true, true, true],
-  [true, true, false, true],
-  [true, false, true, true],
-  [false, true, true, true],
-  [true, true, true, false]
-];
-const MAXUP_PLAN = [1, 2, 0, 3, 2];
-const BOOTS_OR_RAPID = ['B', 'R', 'B', 'R'];
+// Walk the whole state graph from P, then walk it backwards from F.
+function analyse(rows, opts) {
+  opts = opts || {};
+  const s = makeSolver(rows);
+  const W = s.W, H = s.H;
+  const grid = toGrid(rows);
+  const start = findAll(grid, 'P')[0];
+  const flag = findAll(grid, 'F')[0];
+  if (!start || !flag) return null;
 
-// ---------------------------------------------------------------------------
-// building a normal level out of chunks
-// ---------------------------------------------------------------------------
+  const allowKey = opts.allowKey !== false;
+  const N = W * H * 4;
+  const dist = new Int32Array(N).fill(-1);
+  const from = [];
+  const to = [];
 
-const WIDTHS = [[120, 140], [135, 155], [150, 170], [160, 180], [170, 200]];
+  function id(x, y, mode, key) { return ((y * W + x) * 2 + mode) * 2 + (key ? 1 : 0); }
 
-const LEVEL_NAMES = [
-  ['First Steps', 'Log Jump', 'Bug Hunt', 'Deep Woods', 'Skull King'],
-  ['Cold Start', 'Ice Slide', 'Snow Drift', 'Frozen Cave', 'Frost Giant'],
-  ['Dry Sand', 'Spike Dunes', 'Lost Tomb', 'Gold Room', 'Mummy Lord'],
-  ['Hot Rocks', 'Ash Path', 'Lava Falls', 'Fire Bridge', 'Fire Dragon'],
-  ['Dark Gate', 'Night Walk', 'Ghost Hall', 'Last Climb', 'Shadow Master']
-];
+  const startKey = allowKey && s.at(start.x, start.y) === 'k';
+  const s0 = id(start.x, start.y, 0, startKey);
+  dist[s0] = 0;
+  const queue = [s0];
+  let head = 0;
 
-function startPiece() {
-  const a = canvas('start', 10);
-  a.put(STAND, 3, 'P');
-  return a;
-}
+  while (head < queue.length) {
+    const cur = queue[head++];
+    const key = (cur & 1) === 1;
+    const mode = (cur >> 1) & 1;
+    const cell = cur >> 2;
+    const x = cell % W;
+    const y = (cell - x) / W;
+    const d = dist[cur];
 
-function endPiece() {
-  const a = canvas('end', 14);
-  a.coins(12, 2, 3);
-  a.put(STAND, 8, 'F');
-  return a;
-}
+    s.moves(x, y, mode, key, function (nx, ny, nmode) {
+      let nkey = key;
+      if (allowKey && s.at(nx, ny) === 'k') nkey = true;
+      const nid = id(nx, ny, nmode, nkey);
+      from.push(cur); to.push(nid);
+      if (dist[nid] < 0) { dist[nid] = d + 1; queue.push(nid); }
+    });
+  }
 
-function plainPiece(width) {
-  return canvas('plain', width);
-}
-
-function joinPieces(name, world, boss, pieces) {
-  let width = 0;
-  pieces.forEach(function (p) { width += p.width; });
-  const cells = [];
-  for (let r = 0; r < H; r++) cells.push([]);
-  const slots = [];
-  let offset = 0;
-  pieces.forEach(function (p) {
-    for (let r = 0; r < H; r++) {
-      for (let x = 0; x < p.width; x++) cells[r].push(p.cells[r][x]);
+  const back = new Int32Array(N).fill(-1);
+  const heads = new Int32Array(N).fill(-1);
+  const nextEdge = new Int32Array(from.length).fill(-1);
+  for (let i = 0; i < from.length; i++) {
+    nextEdge[i] = heads[to[i]];
+    heads[to[i]] = i;
+  }
+  const goals = [];
+  for (let mode = 0; mode < 2; mode++) {
+    for (let key = 0; key < 2; key++) {
+      const gid = id(flag.x, flag.y, mode, key);
+      if (dist[gid] >= 0) { back[gid] = 0; goals.push(gid); }
     }
-    p.slots.forEach(function (s) { slots.push([s[0], s[1] + offset]); });
-    offset += p.width;
-  });
-  return { name: name, world: world, boss: boss, cells: cells, slots: slots, width: width };
-}
+  }
+  const q2 = goals.slice();
+  head = 0;
+  while (head < q2.length) {
+    const cur = q2[head++];
+    for (let e = heads[cur]; e >= 0; e = nextEdge[e]) {
+      const src = from[e];
+      if (back[src] < 0) { back[src] = back[cur] + 1; q2.push(src); }
+    }
+  }
 
-// Every level must have at least this many chunks of each kind, so a world
-// always feels like itself and no level ends up missing a whole idea.
-const WORLD_QUOTA = [
-  { plat: 2, hole: 1, coin: 1, enemy: 1, step: 1 },
-  { plat: 2, hole: 1, spring: 2, flyer: 2 },
-  { plat: 2, hole: 1, spike: 2, enemy: 2, step: 1 },
-  { plat: 2, hole: 1, lava: 3, blob: 2, spike: 1 },
-  { plat: 3, hole: 1, flyer: 2, enemy: 2, spike: 1 }
-];
+  let goalDist = -1;
+  goals.forEach(function (g) { if (goalDist < 0 || dist[g] < goalDist) goalDist = dist[g]; });
 
-function buildNormalLevel(index) {
-  const world = Math.floor(index / 5);
-  const inWorld = index % 5;
-  const rng = mulberry32(1000 + index * 7919);
-  const range = WIDTHS[world];
-  const target = range[0] + Math.floor(rng() * (range[1] - range[0] + 1));
+  function best(arr, x, y) {
+    let v = -1;
+    for (let mode = 0; mode < 2; mode++) {
+      for (let key = 0; key < 2; key++) {
+        const t = arr[id(x, y, mode, key)];
+        if (t >= 0 && (v < 0 || t < v)) v = t;
+      }
+    }
+    return v;
+  }
 
-  const walkers = WALKERS_BY_WORLD[world];
-  const flyers = FLYERS_BY_WORLD[world];
-  const blobs = BLOBS_BY_WORLD[world];
-  const ctx = {
-    world: world,
-    walker: function () { return pickOne(walkers, rng); },
-    flyer: function () { return pickOne(flyers, rng); },
-    blob: function () { return pickOne(blobs, rng); }
+  return {
+    ok: goalDist >= 0,
+    goalDist: goalDist,
+    reachable: function (x, y) { return best(dist, x, y) >= 0; },
+    distTo: function (x, y) { return best(dist, x, y); },
+    detour: function (x, y) {
+      const a = best(dist, x, y), b = best(back, x, y);
+      if (a < 0 || b < 0) return false;
+      return a + b > goalDist;
+    }
   };
-
-  const endW = 14;
-  const pieces = [startPiece()];
-  let used = pieces[0].width;
-  const counts = {};
-  let last = '';
-
-  const quota = {};
-  Object.keys(WORLD_QUOTA[world]).forEach(function (k) { quota[k] = WORLD_QUOTA[world][k]; });
-
-  for (;;) {
-    const room = target - endW - used;
-    let options = CHUNKS.filter(function (c) {
-      return c.width <= room && c.name !== last &&
-        (counts[c.name] || 0) < 3 && chunkWeight(c, world) > 0;
-    });
-    if (!options.length) break;
-
-    // if a kind of chunk is still owed, lean towards it, and the less room
-    // is left the harder we lean
-    let owed = 0;
-    Object.keys(quota).forEach(function (k) { owed += quota[k]; });
-    if (owed > 0) {
-      const guessLeft = Math.max(1, Math.floor(room / 16));
-      if (rng() < owed / guessLeft) {
-        const wanted = options.filter(function (c) {
-          return c.tags.some(function (t) { return quota[t] > 0; });
-        });
-        if (wanted.length) options = wanted;
-      }
-    }
-
-    let total = 0;
-    const weights = options.map(function (c) {
-      const w = chunkWeight(c, world);
-      total += w;
-      return w;
-    });
-    let roll = rng() * total;
-    let pick = options[options.length - 1];
-    for (let i = 0; i < options.length; i++) {
-      roll -= weights[i];
-      if (roll <= 0) { pick = options[i]; break; }
-    }
-    pieces.push(buildChunk(pick, ctx));
-    pick.tags.forEach(function (t) { if (quota[t] > 0) quota[t]--; });
-    counts[pick.name] = (counts[pick.name] || 0) + 1;
-    used += pick.width;
-    last = pick.name;
-  }
-
-  const pad = target - endW - used;
-  if (pad > 0) pieces.push(plainPiece(pad));
-  pieces.push(endPiece());
-
-  const level = joinPieces(LEVEL_NAMES[world][inWorld], world, false, pieces);
-  level.chunks = Object.keys(counts);
-
-  topUpEnemies(level, ctx, rng);
-
-  // now drop the power ups in
-  const spots = itemSpots(level.cells, level.width, level.slots);
-  const taken = [];
-  const W = level.width;
-
-  if (STAR_PLAN[world][inWorld]) {
-    placeItem(level, spots, taken, '*', function (s) {
-      return s.x >= W * 0.36 && s.x <= W * 0.64;
-    }, rng);
-  }
-  placeItem(level, spots, taken, 'H', function (s) {
-    return s.x > W * 0.55;
-  }, rng);
-  if (MAXUP_PLAN[world] === inWorld) {
-    placeItem(level, spots, taken, 'M', function (s) {
-      return s.kind !== 'ground' || s.x < W * 0.5;
-    }, rng);
-  }
-  placeItem(level, spots, taken, BOOTS_OR_RAPID[inWorld], function () { return true; }, rng);
-
-  return level;
 }
 
 // ---------------------------------------------------------------------------
-// boss levels, made by hand
+// counting things to do
 // ---------------------------------------------------------------------------
 
-const BOSS_WIDTHS = [68, 70, 72, 74, 76];
-const BOSS_EXTRA = ['R', 'B', 'R', 'B', 'R'];
-const BOSS_STAR = [false, false, true, true, true];
-
-function buildBossLevel(world) {
-  const W = BOSS_WIDTHS[world];
-  const name = LEVEL_NAMES[world][4];
-  const a = canvas(name, W);
-
-  // the way in: two platforms with coins on them
-  a.put(STAND, 3, 'P');
-  a.plat(11, 10, 14); a.coins(10, 10, 14);
-  a.plat(9, 17, 21); a.coins(8, 17, 21);
-  a.coins(12, 7, 8);
-
-  const bx = W - 18;          // where the boss waits
-  a.put(STAND, bx, BOSSES[world]);
-
-  // help before the fight, all of it left of the clear arena
-  a.put(STAND, 29, 'H');
-  a.plat(11, 32, 35);
-  a.put(10, 33, BOSS_EXTRA[world]);
-  a.coin(10, 35);
-  if (BOSS_STAR[world]) a.put(STAND, 37, '*');
-
-  // a ledge on the far side to dodge on to
-  a.plat(11, bx + 11, bx + 14);
-  a.coins(10, bx + 11, bx + 14);
-
-  return { name: name, world: world, boss: true, cells: a.cells, slots: [], width: W };
-}
-
-// ---------------------------------------------------------------------------
-// counting things, so we can see how busy a level is
-// ---------------------------------------------------------------------------
-
-function countFeatures(cells, W) {
-  let features = 0;
-
-  // groups of coins that touch each other count as one thing
+function countFeatures(rows) {
+  const H = rows.length, W = rows[0].length;
+  let n = 0;
   const seen = {};
-  for (let r = 0; r < H; r++) {
+  function at(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? '#' : rows[y][x]; }
+
+  for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      if (cells[r][x] !== 'o' || seen[r + ':' + x]) continue;
-      features++;
-      const stack = [[r, x]];
+      if (at(x, y) !== 'o' || seen[y + ':' + x]) continue;
+      n++;
+      const stack = [[x, y]];
       while (stack.length) {
-        const at = stack.pop();
-        const key = at[0] + ':' + at[1];
-        if (seen[key]) continue;
-        seen[key] = true;
+        const p = stack.pop();
+        const k = p[1] + ':' + p[0];
+        if (seen[k]) continue;
+        seen[k] = true;
         [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
-          const rr = at[0] + d[0], xx = at[1] + d[1];
-          if (rr < 0 || rr >= H || xx < 0 || xx >= W) return;
-          if (cells[rr][xx] === 'o' && !seen[rr + ':' + xx]) stack.push([rr, xx]);
+          const xx = p[0] + d[0], yy = p[1] + d[1];
+          if (at(xx, yy) === 'o' && !seen[yy + ':' + xx]) stack.push([xx, yy]);
         });
       }
     }
   }
-
-  // runs of platforms and runs of spikes
-  ['=', '^'].forEach(function (ch) {
-    for (let r = 0; r < H; r++) {
+  '=^~/%|'.split('').forEach(function (ch) {
+    for (let y = 0; y < H; y++) {
       let run = false;
       for (let x = 0; x < W; x++) {
-        const on = cells[r][x] === ch;
-        if (on && !run) features++;
+        const on = at(x, y) === ch;
+        if (on && !run) n++;
         run = on;
       }
     }
   });
-
-  // runs of holes and runs of lava
-  let inGap = false;
-  let inLava = false;
+  let inGap = false, lastTop = null;
   for (let x = 0; x < W; x++) {
-    const gap = !supported(cells, x);
-    if (gap && !inGap) features++;
+    let top = null;
+    for (let y = 0; y < H; y++) {
+      if (SOLID_SET.indexOf(at(x, y)) >= 0) { top = y; break; }
+    }
+    const gap = top === null;
+    if (gap && !inGap) n++;
     inGap = gap;
-    const lava = cells[GROUND_TOP][x] === '~';
-    if (lava && !inLava) features++;
-    inLava = lava;
+    if (top !== null && lastTop !== null && top !== lastTop) n++;
+    if (top !== null) lastTop = top;
   }
-
-  // runs of ground that is higher than normal
-  let inHill = false;
-  for (let x = 0; x < W; x++) {
-    const top = groundTop(cells, x);
-    const hill = top !== null && top < GROUND_TOP;
-    if (hill && !inHill) features++;
-    inHill = hill;
-  }
-
-  // every enemy, boss, spring and power up counts as one thing
-  features += findAll(cells, WALK_ENEMIES.concat(FLYERS, STATIONARY, BOSSES, ITEMS, ['T'])).length;
-
-  return features;
+  n += findAll(toGrid(rows), ALL_ENEMY_CH + ALL_BOSS_CH + 'THM*BRkg123456+').length;
+  return n;
 }
 
-function countChars(cells, wanted) {
-  return findAll(cells, wanted).length;
+function groupCount(grid, ch) {
+  const H = grid.length, W = grid[0].length;
+  const seen = {};
+  let n = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (grid[y][x] !== ch || seen[y + ':' + x]) continue;
+      n++;
+      const st = [[x, y]];
+      while (st.length) {
+        const p = st.pop();
+        const k = p[1] + ':' + p[0];
+        if (seen[k]) continue;
+        seen[k] = true;
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+          const xx = p[0] + d[0], yy = p[1] + d[1];
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) return;
+          if (grid[yy][xx] === ch && !seen[yy + ':' + xx]) st.push([xx, yy]);
+        });
+      }
+    }
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------
-// build them all
+// rooms
 // ---------------------------------------------------------------------------
 
-const levels = [];
-for (let world = 0; world < 5; world++) {
-  for (let inWorld = 0; inWorld < 5; inWorld++) {
-    const index = world * 5 + inWorld;
-    levels.push(inWorld === 4 ? buildBossLevel(world) : buildNormalLevel(index));
-  }
+function roomOf(x, y) { return Math.floor(x / ROOM_W) + ',' + Math.floor(y / ROOM_H); }
+
+function roomBounds(C, R, W, H, c, r) {
+  const wallCol = c < C - 1 ? (c + 1) * ROOM_W : W - 1;
+  const floor = r < R - 1 ? (r + 1) * ROOM_H : H - 1;
+  return {
+    c: c, r: r, key: c + ',' + r,
+    x0: c * ROOM_W + 1, x1: wallCol - 1,
+    y0: r * ROOM_H + 1, y1: floor - 1,
+    wallCol: wallCol, floor: floor, sr: floor - 1
+  };
 }
 
-const report = [];
-levels.forEach(function (level, i) {
-  const worst = checkLevel(level);
-  const W = level.width;
-  const features = countFeatures(level.cells, W);
-  report.push({
-    i: i,
-    world: level.world,
-    name: level.name,
-    width: W,
-    enemies: countChars(level.cells, WALK_ENEMIES.concat(FLYERS, STATIONARY, BOSSES)),
-    coins: countChars(level.cells, ['o']),
-    items: countChars(level.cells, ITEMS),
-    gap: worst,
-    perFeature: (W / features).toFixed(1)
+function roomGraph(rows, C, R) {
+  const W = rows[0].length, H = rows.length;
+  function open(ch) { return SOLID_SET.indexOf(ch) < 0; }
+  const nodes = [];
+  const adj = {};
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) { nodes.push(c + ',' + r); adj[c + ',' + r] = []; }
+  }
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      const b = roomBounds(C, R, W, H, c, r);
+      if (c + 1 < C) {
+        let joined = false;
+        for (let y = b.y0; y <= b.y1; y++) if (open(rows[y][b.wallCol])) joined = true;
+        if (joined) {
+          adj[c + ',' + r].push((c + 1) + ',' + r);
+          adj[(c + 1) + ',' + r].push(c + ',' + r);
+        }
+      }
+      if (r + 1 < R) {
+        let joined = false;
+        for (let x = b.x0; x <= b.x1; x++) if (open(rows[b.floor][x])) joined = true;
+        if (joined) {
+          adj[c + ',' + r].push(c + ',' + (r + 1));
+          adj[c + ',' + (r + 1)].push(c + ',' + r);
+        }
+      }
+    }
+  }
+  return { adj: adj, nodes: nodes };
+}
+
+function bfsRooms(adj, from) {
+  const d = {}; d[from] = 0;
+  const q = [from];
+  let h = 0;
+  while (h < q.length) {
+    const cur = q[h++];
+    adj[cur].forEach(function (n) { if (d[n] === undefined) { d[n] = d[cur] + 1; q.push(n); } });
+  }
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// the rules every level must obey
+// ---------------------------------------------------------------------------
+
+function checkLevel(level) {
+  const bad = [];
+  const rows = level.rows;
+  const world = level.world;
+  const boss = level.boss;
+  const kind = level.kind;
+  const H = rows.length;
+  const W = rows[0].length;
+  const grid = toGrid(rows);
+  function say(m) { bad.push(m); }
+
+  rows.forEach(function (row, y) {
+    if (row.length !== W) say('row ' + y + ' is ' + row.length + ' wide, wanted ' + W);
   });
-});
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (LEGAL.indexOf(rows[y][x]) < 0) say('odd letter "' + rows[y][x] + '" at ' + x + ',' + y);
+    }
+  }
 
-// ---------------------------------------------------------------------------
-// write levels.js
-// ---------------------------------------------------------------------------
+  if (kind === 'run') {
+    if (H !== RUN_H) say('a run level needs 17 rows, has ' + H);
+    if (boss) {
+      if (W < 90 || W > 130) say('a boss level is ' + W + ' wide, wanted 90 to 130');
+    } else if (W < 160 || W > 240) {
+      say('is ' + W + ' wide, wanted 160 to 240');
+    }
+  } else {
+    if (H !== 34 && H !== 51) say('a maze needs 34 or 51 rows, has ' + H);
+    if (W < 90 || W > 150) say('a maze is ' + W + ' wide, wanted 90 to 150');
+    if (W % ROOM_W !== 0) say('a maze width must divide by ' + ROOM_W);
+  }
 
-let out = '';
-out += '// Level maps for Ninja Master.\n';
-out += '// Made by tools/genlevels.cjs. Run "node tools/genlevels.cjs" to make it again.\n';
-out += '//\n';
-out += '// Each level is a grid of letters. Every row must be the same length,\n';
-out += '// and every level is 17 rows tall.\n';
-out += '//\n';
-out += '// The ground and the traps:\n';
-out += '//   .  empty air        #  solid ground     =  platform (a thin plank)\n';
-out += '//   ^  spikes (ouch)    ~  lava (ouch)      T  spring, it bounces you high\n';
-out += '//   o  coin             P  where you start  F  the flag, touch it to win\n';
-out += '//\n';
-out += '// The baddies, two for each world:\n';
-out += '//   Z  zombie, slow      S  skeleton, throws bones\n';
-out += '//   W  snowman, throws snowballs             V  bat, it flies\n';
-out += '//   U  mummy, slow and tough                 C  scorpion, fast\n';
-out += '//   I  imp, it hops at you                   G  lava blob, jumps up and down\n';
-out += '//   N  shadow ninja, throws darts            Y  ghost, goes through walls\n';
-out += '//\n';
-out += '// The bosses, one at the end of each world:\n';
-out += '//   K  Skull King       J  Frost Giant      Q  Mummy Lord\n';
-out += '//   D  Fire Dragon      X  Shadow Master\n';
-out += '//\n';
-out += '// Power ups you can pick up:\n';
-out += '//   H  one heart back                        M  one more heart for ever\n';
-out += '//   *  star power, for 8 seconds nothing can hurt you\n';
-out += '//   B  jump boots, triple jump               R  rapid stars, throw much faster\n';
-out += '//\n';
-out += '// Rules that keep a level possible to finish:\n';
-out += '//   1. Holes and lava are 3 columns wide or less. One jump goes about 4.\n';
-out += '//   2. Spikes and walking baddies stay 3 columns away from a hole edge.\n';
-out += '//   3. No platform sits above spikes or a walking baddy.\n';
-out += '//   4. No platform hangs over a hole or over lava.\n';
-out += '//   5. The floor never steps up or down more than 2 rows at a time.\n';
-out += '//   6. A star only ever sits in the middle of a level.\n';
-out += '//   7. Nothing at all sits next to the start, and nothing nasty next to the flag.\n';
-out += '//\n';
-out += '// There are 25 levels: 5 worlds with 5 levels each. The last level of\n';
-out += '// every world is a boss fight, so it has a boss and no flag.\n';
-out += '\n';
-out += 'const LEVELS = [\n';
+  const starts = findAll(grid, 'P');
+  const flags = findAll(grid, 'F');
+  const gems = findAll(grid, 'g');
+  if (starts.length !== 1) say('wants one P, found ' + starts.length);
+  if (flags.length !== 1) say('wants one F, found ' + flags.length);
+  if (gems.length !== 3) say('wants three gems, found ' + gems.length);
 
-levels.forEach(function (level, i) {
-  const rows = level.cells.map(function (row) { return row.join(''); });
-  rows.forEach(function (row) {
-    if (row.length !== level.width) throw new Error(level.name + ': a row came out the wrong width');
+  const mine = ENEMIES[world];
+  findAll(grid, ALL_ENEMY_CH).forEach(function (e) {
+    if (mine.indexOf(e.ch) < 0) say('enemy "' + e.ch + '" is not from world ' + world);
   });
-  const joined = rows.map(function (row) { return "      '" + row + "'"; }).join(',\n');
-  out += '  {\n';
-  out += "    name: '" + level.name + "',\n";
-  out += '    world: ' + level.world + ',\n';
-  out += '    boss: ' + (level.boss ? 'true' : 'false') + ',\n';
-  out += '    rows: [\n' + joined + '\n    ]\n';
-  out += '  }' + (i < levels.length - 1 ? ',' : '') + '\n';
-});
+  const bossHere = findAll(grid, ALL_BOSS_CH);
+  if (boss) {
+    if (bossHere.length !== 1) say('a boss level wants one boss, found ' + bossHere.length);
+    else if (bossHere[0].ch !== BOSSES[world]) say('wrong boss for world ' + world);
+  } else if (bossHere.length) {
+    say('a normal level must have no boss');
+  }
 
-out += '];\n';
+  findAll(grid, ALL_ENEMY_CH + ALL_BOSS_CH).forEach(function (e) {
+    const under = e.y + 1 < H ? rows[e.y + 1][e.x] : '.';
+    if (SOLID_SET.indexOf(under) < 0) {
+      say('"' + e.ch + '" at ' + e.x + ',' + e.y + ' stands on nothing');
+    }
+  });
 
-fs.writeFileSync(OUT, out);
+  if (LAVA_WORLDS.indexOf(world) < 0 && findAll(grid, '~').length) {
+    say('world ' + world + ' must have no lava or deep water');
+  }
+
+  findAll(grid, 'T').forEach(function (t) {
+    for (let i = 1; i <= 7; i++) {
+      const c = t.y - i >= 0 ? rows[t.y - i][t.x] : '#';
+      if (SOLID_SET.indexOf(c) >= 0) say('the spring at ' + t.x + ',' + t.y + ' is blocked above');
+    }
+  });
+
+  if (starts.length !== 1 || flags.length !== 1) return bad;
+
+  const solve = analyse(rows);
+  if (!solve) { say('no start or no flag'); return bad; }
+  if (!solve.ok) say('the solver cannot reach the flag');
+
+  gems.forEach(function (g) {
+    if (!solve.ok) return;
+    if (!solve.reachable(g.x, g.y)) say('the gem at ' + g.x + ',' + g.y + ' cannot be reached');
+    else if (!solve.detour(g.x, g.y)) say('the gem at ' + g.x + ',' + g.y + ' sits on the main path');
+  });
+
+  const stars = findAll(grid, '*');
+  if (kind === 'run') {
+    if (stars.length !== 1) say('a run level wants one star, found ' + stars.length);
+    stars.forEach(function (st) {
+      const part = st.x / W;
+      if (part < 0.35 || part > 0.55) {
+        say('the star at ' + st.x + ' is at ' + Math.round(part * 100) + ' percent, wanted 35 to 55');
+      }
+    });
+  } else if (stars.length > 1) {
+    say('a maze wants at most one star');
+  }
+
+  const weapons = findAll(grid, '123456');
+  if (weapons.length < 1 || weapons.length > 2) say('wants 1 or 2 weapons, found ' + weapons.length);
+  if (kind === 'run') {
+    weapons.forEach(function (wp) {
+      if (wp.x > W * 0.68) say('a weapon at ' + wp.x + ' is past the first two thirds');
+    });
+  }
+
+  const coins = findAll(grid, 'o').length;
+  const foes = findAll(grid, ALL_ENEMY_CH).length;
+  if (kind === 'run' && !boss) {
+    if (coins < 30 || coins > 60) say('wants 30 to 60 coins, found ' + coins);
+    if (foes < 12 || foes > 22) say('wants 12 to 22 enemies, found ' + foes);
+  } else if (kind === 'maze') {
+    if (coins < 25 || coins > 50) say('wants 25 to 50 coins, found ' + coins);
+    if (foes < 10 || foes > 20) say('wants 10 to 20 enemies, found ' + foes);
+  } else {
+    if (coins < 10 || coins > 40) say('a boss level wants 10 to 40 coins, found ' + coins);
+    if (foes < 2 || foes > 8) say('a boss level wants 2 to 8 enemies, found ' + foes);
+  }
+
+  if (kind === 'run') {
+    let run = 0;
+    for (let x = 0; x <= W; x++) {
+      let hard = false;
+      if (x < W) {
+        for (let y = 0; y < H; y++) if (SOLID_SET.indexOf(rows[y][x]) >= 0) hard = true;
+      }
+      if (x < W && !hard) run++;
+      else { if (run > 4) say('a hole of ' + run + ' columns ends at ' + x); run = 0; }
+    }
+    const feats = countFeatures(rows);
+    if (W / feats > 4) say('only one thing to do every ' + (W / feats).toFixed(1) + ' columns');
+    if (world >= 1 && !boss && findAll(grid, 'T').length < 1) say('wants at least one spring');
+  }
+
+  if (boss && bossHere.length === 1) {
+    const b = bossHere[0];
+    function plainCol(x) {
+      if (x < 1 || x >= W - 1) return false;
+      for (let y = 0; y < H; y++) {
+        const c = rows[y][x];
+        if (y >= RUN_FLOOR) { if (c !== '#') return false; continue; }
+        if (c === '.' || c === 'o' || c === b.ch) continue;
+        return false;
+      }
+      return true;
+    }
+    let left = b.x, right = b.x;
+    while (plainCol(left - 1)) left--;
+    while (plainCol(right + 1)) right++;
+    const wide = right - left + 1;
+    if (wide < 26) say('the boss arena is only ' + wide + ' columns, wanted 26');
+    if (flags.length && flags[0].x < right) say('the flag must be past the arena');
+    gems.forEach(function (g) {
+      if (g.x > left) say('a gem at ' + g.x + ' is not before the arena');
+    });
+  }
+
+  if (kind === 'maze') {
+    for (let x = 0; x < W; x++) {
+      if (rows[0][x] !== '#') say('the top border leaks at ' + x);
+      if (rows[H - 1][x] !== '#') say('the bottom border leaks at ' + x);
+    }
+    for (let y = 0; y < H; y++) {
+      if (rows[y][0] !== '#') say('the left border leaks at ' + y);
+      if (rows[y][W - 1] !== '#') say('the right border leaks at ' + y);
+    }
+
+    const keys = findAll(grid, 'k');
+    if (keys.length !== 1) say('a maze wants one key, found ' + keys.length);
+    const doorTiles = findAll(grid, '+');
+    const doorGroups = groupCount(grid, '+');
+    if (doorGroups < 1 || doorGroups > 2) say('a maze wants 1 or 2 doors, found ' + doorGroups);
+    if (!doorTiles.length) say('a maze wants at least one door tile');
+    if (!findAll(grid, '%').length) say('a maze wants a fake wall');
+
+    if (keys.length === 1) {
+      const noKey = analyse(rows, { allowKey: false });
+      if (!solve.reachable(keys[0].x, keys[0].y)) say('the key cannot be reached');
+      if (noKey && !noKey.reachable(keys[0].x, keys[0].y)) say('the key is behind the door');
+      if (noKey && noKey.ok) say('the flag can be reached without the key');
+    }
+
+    const C = W / ROOM_W, R = H / ROOM_H;
+    const g = roomGraph(rows, C, R);
+    const startRoom = roomOf(starts[0].x, starts[0].y);
+    const flagRoom = roomOf(flags[0].x, flags[0].y);
+    const dist = bfsRooms(g.adj, startRoom);
+    g.nodes.forEach(function (n) { if (dist[n] === undefined) say('room ' + n + ' is cut off'); });
+    let far = 0;
+    g.nodes.forEach(function (n) { if (dist[n] !== undefined && dist[n] > far) far = dist[n]; });
+    if (dist[flagRoom] !== far) {
+      say('the flag room is ' + dist[flagRoom] + ' rooms away, the furthest is ' + far);
+    }
+    const distFlag = bfsRooms(g.adj, flagRoom);
+    const main = {};
+    g.nodes.forEach(function (n) {
+      if (dist[n] !== undefined && dist[n] + distFlag[n] === dist[flagRoom]) main[n] = true;
+    });
+    let deep = 0;
+    g.nodes.forEach(function (n) {
+      if (main[n] || g.adj[n].length !== 1) return;
+      let d = 0, cur = n, prev = null;
+      while (!main[cur] && d < 60) {
+        const nxt = g.adj[cur].filter(function (m) { return m !== prev; })[0];
+        if (!nxt) break;
+        prev = cur; cur = nxt; d++;
+      }
+      if (d >= 2) deep++;
+    });
+    if (deep < 2) say('wants two dead ends two or more rooms deep, found ' + deep);
+
+    const perRoom = {};
+    findAll(grid, ALL_ENEMY_CH).forEach(function (e) {
+      const k = roomOf(e.x, e.y);
+      perRoom[k] = (perRoom[k] || 0) + 1;
+    });
+    Object.keys(perRoom).forEach(function (k) {
+      if (perRoom[k] > 3) say('room ' + k + ' holds ' + perRoom[k] + ' enemies');
+    });
+  }
+
+  return bad;
+}
 
 // ---------------------------------------------------------------------------
-// tell us what we made
+// pieces of a run level
+// ---------------------------------------------------------------------------
+//
+// Every piece is 17 rows tall. Its first two and last two columns are always
+// plain flat ground with clear air above, so pieces join safely.
+
+function segBase(w) {
+  const g = makeGrid(w, RUN_H, '.');
+  for (let x = 0; x < w; x++) {
+    for (let y = RUN_FLOOR; y < RUN_H; y++) g[y][x] = '#';
+  }
+  return g;
+}
+
+function segFlat(rng) { return segBase(irnd(rng, 5, 9)); }
+
+function segGap(rng) {
+  const n = irnd(rng, 2, 3);
+  const g = segBase(n + 8);
+  for (let i = 0; i < n; i++) {
+    for (let y = RUN_FLOOR; y < RUN_H; y++) g[y][3 + i] = '.';
+  }
+  return g;
+}
+
+function segLava(rng) {
+  const n = irnd(rng, 2, 3);
+  const g = segBase(n + 8);
+  for (let i = 0; i < n; i++) {
+    for (let y = RUN_FLOOR; y < RUN_H; y++) g[y][3 + i] = '~';
+  }
+  return g;
+}
+
+function segSpikes(rng) {
+  const n = irnd(rng, 1, 3);
+  const g = segBase(n + 8);
+  for (let i = 0; i < n; i++) g[RUN_STAND][3 + i] = '^';
+  return g;
+}
+
+function segSteps(rng) {
+  const up = irnd(rng, 1, 2);
+  const w = 12;
+  const g = makeGrid(w, RUN_H, '.');
+  const top = [];
+  for (let x = 0; x < w; x++) {
+    let t = RUN_FLOOR;
+    if (x >= 3 && x < w - 3) t = RUN_FLOOR - up;
+    if (x === 2 || x === w - 3) t = RUN_FLOOR - (up > 1 ? 1 : 0);
+    top.push(t);
+  }
+  for (let x = 0; x < w; x++) {
+    for (let y = top[x]; y < RUN_H; y++) g[y][x] = '#';
+  }
+  return g;
+}
+
+function segPillar(rng) {
+  const g = segBase(9);
+  g[RUN_STAND][4] = '#';
+  g[RUN_STAND - 1][4] = '#';
+  return g;
+}
+
+function segBlocks(rng) {
+  const g = segBase(11);
+  g[RUN_STAND][3] = '/';
+  if (rng() < 0.6) g[RUN_STAND][6] = '/';
+  g[RUN_STAND - 2][4] = '/';
+  return g;
+}
+
+function segPlat(rng) {
+  const g = segBase(11);
+  const n = irnd(rng, 3, 4);
+  for (let i = 0; i < n; i++) g[11][3 + i] = '=';
+  for (let i = 0; i < n; i++) g[10][3 + i] = 'o';
+  return g;
+}
+
+function segTower(rng) {
+  const g = segBase(13);
+  for (let i = 0; i < 3; i++) g[11][2 + i] = '=';
+  for (let i = 0; i < 3; i++) g[8][6 + i] = '=';
+  g[10][3] = 'o';
+  g[7][7] = 'o';
+  return g;
+}
+
+function segCeiling(rng) {
+  const g = segBase(11);
+  for (let x = 2; x < 9; x++) { g[8][x] = '#'; g[9][x] = '#'; }
+  g[RUN_STAND][4] = 'o';
+  g[RUN_STAND][6] = 'o';
+  return g;
+}
+
+function segSpring(rng) {
+  const g = segBase(11);
+  g[RUN_STAND][4] = 'T';
+  g[10][4] = 'o';
+  g[9][4] = 'o';
+  g[8][4] = 'o';
+  return g;
+}
+
+// gem piece 1: a hidden room inside a rock block, entered through a fake wall
+function segGemBlock(rng) {
+  const c = 4;
+  const g = segBase(c + 6 + 4);
+  for (let i = 0; i < 6; i++) { g[11][c + i] = '#'; g[12][c + i] = '#'; }
+  g[RUN_STAND][c] = '%';
+  for (let i = 1; i <= 4; i++) g[RUN_STAND][c + i] = '.';
+  g[RUN_STAND][c + 5] = '#';
+  g[RUN_STAND][c + 2] = 'g';
+  g[RUN_STAND][c + 3] = 'o';
+  g[10][c + 2] = 'o';
+  return g;
+}
+
+// gem piece 2: a hole in the ground with a side room off it
+function segGemPit(rng) {
+  const c = 4;
+  const g = segBase(c + 6 + 4);
+  for (let i = 0; i < 3; i++) { g[14][c + i] = '.'; g[15][c + i] = '.'; }
+  for (let i = 3; i < 6; i++) g[15][c + i] = '.';
+  g[15][c + 3] = '%';
+  g[15][c + 4] = 'g';
+  g[15][c + 1] = 'o';
+  return g;
+}
+
+// gem piece 3: a spring that throws you up to a high ledge
+function segGemSpring(rng) {
+  const c = 4;
+  const g = segBase(12);
+  g[RUN_STAND][c] = 'T';
+  for (let i = 1; i <= 3; i++) g[7][c + i] = '=';
+  g[6][c + 2] = 'g';
+  g[6][c + 1] = 'o';
+  g[6][c + 3] = 'o';
+  return g;
+}
+
+function hcat(list) {
+  const w = list.reduce(function (a, g) { return a + g[0].length; }, 0);
+  const out = makeGrid(w, RUN_H, '.');
+  let ox = 0;
+  list.forEach(function (g) {
+    for (let y = 0; y < RUN_H; y++) {
+      for (let x = 0; x < g[0].length; x++) out[y][ox + x] = g[y][x];
+    }
+    ox += g[0].length;
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// putting items into a finished shape
 // ---------------------------------------------------------------------------
 
-function pad(s, n) {
-  s = String(s);
-  while (s.length < n) s += ' ';
-  return s;
-}
-function padLeft(s, n) {
-  s = String(s);
-  while (s.length < n) s = ' ' + s;
-  return s;
+function restSpots(grid, solve, lo, hi) {
+  const H = grid.length, W = grid[0].length;
+  const out = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = Math.max(0, lo); x < Math.min(W, hi); x++) {
+      if (grid[y][x] !== '.') continue;
+      const below = y + 1 < H ? grid[y + 1][x] : '#';
+      if (SOLID_SET.indexOf(below) < 0) continue;
+      if (!solve.reachable(x, y)) continue;
+      out.push({ x: x, y: y });
+    }
+  }
+  return out;
 }
 
-console.log('');
-console.log(pad('idx', 4) + pad('world', 6) + pad('name', 15) + padLeft('width', 6) +
-  padLeft('foes', 6) + padLeft('coins', 6) + padLeft('items', 6) + padLeft('gap', 5) +
-  padLeft('cols/thing', 12));
-console.log(new Array(66).join('-'));
-report.forEach(function (r) {
-  console.log(pad(r.i, 4) + pad(r.world, 6) + pad(r.name, 15) + padLeft(r.width, 6) +
-    padLeft(r.enemies, 6) + padLeft(r.coins, 6) + padLeft(r.items, 6) + padLeft(r.gap, 5) +
-    padLeft(r.perFeature, 12));
+function spread(rng, spots, want, minD) {
+  const order = shuffle(rng, spots);
+  const kept = [];
+  for (let i = 0; i < order.length && kept.length < want; i++) {
+    const s = order[i];
+    let ok = true;
+    for (let j = 0; j < kept.length; j++) {
+      if (Math.abs(kept[j].x - s.x) + Math.abs(kept[j].y - s.y) < minD) { ok = false; break; }
+    }
+    if (ok) kept.push(s);
+  }
+  return kept;
+}
+
+function used(grid, s) { return grid[s.y][s.x] !== '.'; }
+
+// ---------------------------------------------------------------------------
+// run levels
+// ---------------------------------------------------------------------------
+
+function buildRun(world, index, inWorld, seed) {
+  const rng = mulberry32(seed);
+  const hard = inWorld === 0 ? 0 : (inWorld === 1 ? 1 : 2);
+
+  const makers = [segFlat, segGap, segSpikes, segSteps, segPlat, segTower,
+    segPillar, segBlocks, segCeiling, segSpring];
+  if (LAVA_WORLDS.indexOf(world) >= 0) makers.push(segLava, segLava);
+  if (world >= 1) makers.push(segSpring);
+
+  const body = [segGemBlock(rng), segGemPit(rng), segGemSpring(rng)];
+  if (world >= 1) body.push(segSpring(rng));
+
+  const target = 170 + irnd(rng, 0, 45);
+  let w = 10 + 12; // start piece and end piece
+  body.forEach(function (g) { w += g[0].length; });
+  let guard = 0;
+  while (w < target && guard++ < 200) {
+    const mk = makers[Math.floor(rng() * makers.length) % makers.length];
+    const g = mk(rng);
+    if (w + g[0].length > 236) break;
+    body.push(g);
+    w += g[0].length;
+  }
+
+  const mixed = shuffle(rng, body);
+  const start = segBase(10);
+  start[RUN_STAND][3] = 'P';
+  const end = segBase(12);
+  end[RUN_STAND][8] = 'F';
+  const grid = hcat([start].concat(mixed, [end]));
+  const W = grid[0].length;
+
+  let solve = analyse(gridRows(grid));
+  if (!solve || !solve.ok) return null;
+
+  // enemies
+  const foes = Math.min(22, 12 + hard * 3 + Math.floor(world / 3));
+  const spotsAll = restSpots(grid, solve, 12, W - 14);
+  const foeSpots = spread(rng, spotsAll.filter(function (s) {
+    return s.y >= 6 && grid[s.y][s.x] === '.';
+  }), foes, 7);
+  if (foeSpots.length < 12) return null;
+  foeSpots.forEach(function (s, i) {
+    grid[s.y][s.x] = ENEMIES[world][i % 2 === 0 ? 0 : 1];
+  });
+
+  // star, in the middle band
+  const lo = Math.ceil(W * 0.38), hi = Math.floor(W * 0.52);
+  const starSpots = restSpots(grid, solve, lo, hi).filter(function (s) {
+    return !used(grid, s);
+  });
+  if (!starSpots.length) return null;
+  const star = starSpots[Math.floor(rng() * starSpots.length) % starSpots.length];
+  grid[star.y][star.x] = '*';
+
+  // weapons in the first two thirds
+  const wCount = 1 + (rng() < 0.5 ? 1 : 0);
+  const wpSpots = spread(rng, restSpots(grid, solve, 14, Math.floor(W * 0.6))
+    .filter(function (s) { return !used(grid, s); }), wCount, 25);
+  if (!wpSpots.length) return null;
+  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, WEAPONS); });
+
+  // helpers
+  const extra = [];
+  extra.push('H');
+  if (rng() < 0.5) extra.push('H');
+  if (rng() < 0.5) extra.push('B');
+  if (rng() < 0.5) extra.push('R');
+  if (inWorld === MAXUP_LEVEL[world]) extra.push('M');
+  const exSpots = spread(rng, restSpots(grid, solve, 20, W - 16)
+    .filter(function (s) { return !used(grid, s); }), extra.length, 18);
+  exSpots.forEach(function (s, i) { grid[s.y][s.x] = extra[i]; });
+
+  // coins
+  const wantCoins = 34 + irnd(rng, 0, 18);
+  const have = findAll(grid, 'o').length;
+  const need = Math.max(0, wantCoins - have);
+  const coinSpots = spread(rng, restSpots(grid, solve, 6, W - 8)
+    .filter(function (s) { return !used(grid, s); }), need, 3);
+  coinSpots.forEach(function (s) { grid[s.y][s.x] = 'o'; });
+
+  return {
+    name: LEVEL_NAMES[world][inWorld], world: world, boss: false,
+    kind: 'run', index: index, rows: gridRows(grid)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// boss levels
+// ---------------------------------------------------------------------------
+
+function buildBoss(world, index, inWorld, seed) {
+  const rng = mulberry32(seed);
+  const runUp = [segBase(10)];
+  runUp[0][RUN_STAND][3] = 'P';
+  const parts = shuffle(rng, [segGemBlock(rng), segGemPit(rng), segGemSpring(rng)]);
+  const filler = [segFlat, segSpikes, segPlat, segPillar, segBlocks];
+  parts.forEach(function (p, i) {
+    runUp.push(p);
+    if (i < 2) runUp.push(filler[Math.floor(rng() * filler.length) % filler.length](rng));
+  });
+  let head = hcat(runUp);
+  while (head[0].length < 52) head = hcat([head, segBase(4)]);
+
+  const gateW = 2;
+  const arenaW = 28 + irnd(rng, 0, 4);
+  const tailW = 8;
+  const gate = segBase(gateW);
+  gate[10][0] = '='; gate[10][1] = '=';
+  gate[11][0] = '='; gate[11][1] = '=';
+  const arena = segBase(arenaW);
+  const gate2 = segBase(gateW);
+  gate2[10][0] = '='; gate2[10][1] = '=';
+  gate2[11][0] = '='; gate2[11][1] = '=';
+  const tail = segBase(tailW);
+  tail[RUN_STAND][5] = 'F';
+
+  const grid = hcat([head, gate, arena, gate2, tail]);
+  const W = grid[0].length;
+  const arenaX = head[0].length + gateW;
+  grid[RUN_STAND][arenaX + Math.floor(arenaW / 2)] = BOSSES[world];
+
+  const solve = analyse(gridRows(grid));
+  if (!solve || !solve.ok) return null;
+
+  const before = restSpots(grid, solve, 12, head[0].length - 2);
+  const foes = 3 + irnd(rng, 0, 3);
+  const foeSpots = spread(rng, before.filter(function (s) { return !used(grid, s); }), foes, 7);
+  if (foeSpots.length < 2) return null;
+  foeSpots.forEach(function (s, i) { grid[s.y][s.x] = ENEMIES[world][i % 2]; });
+
+  const lo = Math.ceil(W * 0.38), hi = Math.floor(W * 0.52);
+  const starSpots = restSpots(grid, solve, lo, Math.min(hi, head[0].length - 2))
+    .filter(function (s) { return !used(grid, s); });
+  if (!starSpots.length) return null;
+  const st = starSpots[Math.floor(rng() * starSpots.length) % starSpots.length];
+  grid[st.y][st.x] = '*';
+
+  const wpSpots = spread(rng, restSpots(grid, solve, 14, Math.floor(W * 0.6))
+    .filter(function (s) { return !used(grid, s); }), 1, 10);
+  if (!wpSpots.length) return null;
+  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, WEAPONS); });
+
+  const hSpots = spread(rng, restSpots(grid, solve, 20, head[0].length - 2)
+    .filter(function (s) { return !used(grid, s); }), 1, 5);
+  hSpots.forEach(function (s) { grid[s.y][s.x] = 'H'; });
+
+  const wantCoins = 16 + irnd(rng, 0, 10);
+  const have = findAll(grid, 'o').length;
+  const coinSpots = spread(rng, restSpots(grid, solve, 6, head[0].length - 2)
+    .filter(function (s) { return !used(grid, s); }), Math.max(0, wantCoins - have), 3);
+  coinSpots.forEach(function (s) { grid[s.y][s.x] = 'o'; });
+
+  return {
+    name: LEVEL_NAMES[world][inWorld], world: world, boss: true,
+    kind: 'run', index: index, rows: gridRows(grid)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// maze levels
+// ---------------------------------------------------------------------------
+
+function buildMaze(world, index, inWorld, seed, roomRows) {
+  const rng = mulberry32(seed);
+  const R = roomRows;
+  const C = irnd(rng, 6, 10);
+  const W = C * ROOM_W;
+  const H = R * ROOM_H;
+  const grid = makeGrid(W, H, '#');
+
+  const rooms = {};
+  for (let r = 0; r < R; r++) {
+    for (let c = 0; c < C; c++) {
+      const b = roomBounds(C, R, W, H, c, r);
+      rooms[b.key] = b;
+      for (let y = b.y0; y <= b.y1; y++) {
+        for (let x = b.x0; x <= b.x1; x++) grid[y][x] = '.';
+      }
+    }
+  }
+
+  // a random tree over the rooms
+  function nbrs(c, r) {
+    const out = [];
+    if (c > 0) out.push((c - 1) + ',' + r);
+    if (c < C - 1) out.push((c + 1) + ',' + r);
+    if (r > 0) out.push(c + ',' + (r - 1));
+    if (r < R - 1) out.push(c + ',' + (r + 1));
+    return out;
+  }
+  const startRoom = irnd(rng, 0, C - 1) + ',' + irnd(rng, 0, R - 1);
+  const seen = {}; seen[startRoom] = true;
+  const edges = [];
+  const stack = [startRoom];
+  while (stack.length) {
+    const cur = stack[stack.length - 1];
+    const parts = cur.split(',');
+    const open = shuffle(rng, nbrs(+parts[0], +parts[1])).filter(function (n) { return !seen[n]; });
+    if (!open.length) { stack.pop(); continue; }
+    const nxt = open[0];
+    seen[nxt] = true;
+    edges.push([cur, nxt]);
+    stack.push(nxt);
+  }
+
+  const adj = {};
+  Object.keys(rooms).forEach(function (k) { adj[k] = []; });
+  edges.forEach(function (e) { adj[e[0]].push(e[1]); adj[e[1]].push(e[0]); });
+
+  // the flag goes in the room furthest away by room steps
+  const dRoom = bfsRooms(adj, startRoom);
+  let flagRoom = startRoom, far = -1;
+  Object.keys(dRoom).forEach(function (k) {
+    if (dRoom[k] > far || (dRoom[k] === far && rng() < 0.3)) { far = dRoom[k]; flagRoom = k; }
+  });
+  if (far < 2) return null;
+
+  // the way from the start room to the flag room
+  const parent = {}; parent[startRoom] = null;
+  const q = [startRoom];
+  let h = 0;
+  while (h < q.length) {
+    const cur = q[h++];
+    adj[cur].forEach(function (n) { if (parent[n] === undefined) { parent[n] = cur; q.push(n); } });
+  }
+  const mainPath = [];
+  for (let cur = flagRoom; cur !== null; cur = parent[cur]) mainPath.unshift(cur);
+  const onMain = {};
+  mainPath.forEach(function (k) { onMain[k] = true; });
+
+  // dig every join
+  const ladderCols = {};
+  const doorEdges = [];
+  function markCol(roomKey, x) {
+    if (!ladderCols[roomKey]) ladderCols[roomKey] = {};
+    ladderCols[roomKey][x] = true;
+  }
+  function carveEdge(a, b) {
+    const A = rooms[a], B = rooms[b];
+    if (A.r === B.r) {
+      const lft = A.c < B.c ? A : B;
+      const x = lft.wallCol;
+      for (let y = lft.sr - 2; y <= lft.sr; y++) grid[y][x] = '.';
+      return { type: 'h', x: x, y: lft.sr, room: lft.key };
+    }
+    const up = A.r < B.r ? A : B;
+    const dn = A.r < B.r ? B : A;
+    let x = irnd(rng, up.x0 + 2, up.x1 - 2);
+    for (let y = up.sr; y <= dn.sr; y++) grid[y][x] = '|';
+    markCol(up.key, x); markCol(dn.key, x);
+    markCol(up.key, x - 1); markCol(dn.key, x - 1);
+    markCol(up.key, x + 1); markCol(dn.key, x + 1);
+    return { type: 'v', x: x, room: up.key };
+  }
+  const carved = edges.map(function (e) {
+    const info = carveEdge(e[0], e[1]);
+    info.a = e[0]; info.b = e[1];
+    return info;
+  });
+
+  // the door goes on a side to side join that is on the way to the flag
+  const mainEdges = carved.filter(function (e) {
+    if (e.type !== 'h') return false;
+    const ia = mainPath.indexOf(e.a), ib = mainPath.indexOf(e.b);
+    return ia >= 0 && ib >= 0 && Math.abs(ia - ib) === 1;
+  });
+  if (!mainEdges.length) return null;
+  const door = mainEdges[mainEdges.length - 1];
+  for (let y = door.y - 2; y <= door.y; y++) grid[y][door.x] = '+';
+
+  // rooms you can reach before the door
+  const cutAdj = {};
+  Object.keys(adj).forEach(function (k) { cutAdj[k] = adj[k].slice(); });
+  cutAdj[door.a] = cutAdj[door.a].filter(function (k) { return k !== door.b; });
+  cutAdj[door.b] = cutAdj[door.b].filter(function (k) { return k !== door.a; });
+  const nearSide = bfsRooms(cutAdj, startRoom);
+  const nearRooms = Object.keys(nearSide);
+  if (nearRooms.length < 2) return null;
+
+  // room space book keeping
+  const taken = {};
+  Object.keys(rooms).forEach(function (k) { taken[k] = {}; });
+  Object.keys(ladderCols).forEach(function (k) {
+    Object.keys(ladderCols[k]).forEach(function (x) { taken[k][x] = true; });
+  });
+  function spanFree(rk, x0, x1) {
+    const b = rooms[rk];
+    if (x0 < b.x0 || x1 > b.x1) return false;
+    for (let x = x0; x <= x1; x++) if (taken[rk][x]) return false;
+    return true;
+  }
+  function claim(rk, x0, x1) {
+    for (let x = x0; x <= x1; x++) taken[rk][x] = true;
+  }
+  function findSpan(rk, wide, rng2) {
+    const b = rooms[rk];
+    const tries = shuffle(rng2, rangeList(b.x0, b.x1 - wide + 1));
+    for (let i = 0; i < tries.length; i++) {
+      if (spanFree(rk, tries[i], tries[i] + wide - 1)) return tries[i];
+    }
+    return -1;
+  }
+  function rangeList(a, b) {
+    const out = [];
+    for (let i = a; i <= b; i++) out.push(i);
+    return out;
+  }
+
+  // the player and the flag
+  const sb = rooms[startRoom];
+  const px = findSpan(startRoom, 3, rng);
+  if (px < 0) return null;
+  grid[sb.sr][px + 1] = 'P';
+  claim(startRoom, px, px + 2);
+  const fb = rooms[flagRoom];
+  const fx = findSpan(flagRoom, 3, rng);
+  if (fx < 0) return null;
+  grid[fb.sr][fx + 1] = 'F';
+  claim(flagRoom, fx, fx + 2);
+
+  // the key, on the near side of the door
+  const keyRooms = shuffle(rng, nearRooms).sort(function (a, b2) {
+    return (adj[a].length - adj[b2].length);
+  });
+  let keyPlaced = false;
+  for (let i = 0; i < keyRooms.length && !keyPlaced; i++) {
+    const rk = keyRooms[i];
+    const x = findSpan(rk, 1, rng);
+    if (x < 0) continue;
+    grid[rooms[rk].sr][x] = 'k';
+    claim(rk, x, x);
+    keyPlaced = true;
+  }
+  if (!keyPlaced) return null;
+
+  // three gems, each in its own hiding place
+  const gemRooms = shuffle(rng, Object.keys(rooms)).sort(function (a, b2) {
+    return (onMain[a] ? 1 : 0) - (onMain[b2] ? 1 : 0);
+  });
+  const gemMakers = shuffle(rng, ['box', 'chimney', 'spring']);
+  let gemsDone = 0;
+  let fakeWall = false;
+  for (let i = 0; i < gemRooms.length && gemsDone < 3; i++) {
+    const rk = gemRooms[i];
+    const b = rooms[rk];
+    const want = gemMakers[gemsDone];
+    if (want === 'box') {
+      const x = findSpan(rk, 6, rng);
+      if (x < 0) continue;
+      for (let k = 0; k < 5; k++) grid[b.sr - 2][x + k] = '#';
+      grid[b.sr][x] = '%';
+      grid[b.sr - 1][x] = '#';
+      grid[b.sr][x + 4] = '#';
+      grid[b.sr - 1][x + 4] = '#';
+      grid[b.sr][x + 2] = 'g';
+      grid[b.sr][x + 1] = 'o';
+      grid[b.sr - 1][x + 2] = 'o';
+      claim(rk, x, x + 5);
+      fakeWall = true;
+      gemsDone++;
+    } else if (want === 'chimney') {
+      if (b.sr - 13 < b.y0) continue;
+      const x = findSpan(rk, 5, rng);
+      if (x < 0) continue;
+      const x0 = x + 1;
+      for (let y = b.sr - 9; y <= b.sr - 1; y++) {
+        grid[y][x0 - 1] = '#';
+        grid[y][x0 + 3] = '#';
+      }
+      grid[b.sr - 11][x0 + 1] = '=';
+      grid[b.sr - 11][x0 + 2] = '=';
+      grid[b.sr - 12][x0 + 1] = 'g';
+      grid[b.sr - 12][x0 + 2] = 'o';
+      claim(rk, x, x + 4);
+      gemsDone++;
+    } else {
+      if (b.sr - 8 < b.y0) continue;
+      const x = findSpan(rk, 5, rng);
+      if (x < 0) continue;
+      const sx = x + 1;
+      grid[b.sr][sx] = 'T';
+      grid[b.sr - 6][sx + 1] = '=';
+      grid[b.sr - 6][sx + 2] = '=';
+      grid[b.sr - 7][sx + 1] = 'g';
+      grid[b.sr - 7][sx + 2] = 'o';
+      claim(rk, x, x + 4);
+      gemsDone++;
+    }
+  }
+  if (gemsDone < 3) return null;
+  if (!fakeWall) return null;
+
+  // a little furniture so the rooms are not empty boxes
+  Object.keys(rooms).forEach(function (rk) {
+    const b = rooms[rk];
+    const tries = irnd(rng, 3, 5);
+    for (let t = 0; t < tries; t++) {
+      const kind = rng();
+      if (kind < 0.34) {
+        // a stack of shelves you can climb, one jump at a time
+        if (b.sr - 8 < b.y0) continue;
+        const x = findSpan(rk, 7, rng);
+        if (x < 0) continue;
+        for (let k = 1; k <= 3; k++) grid[b.sr - 3][x + k] = '=';
+        for (let k = 4; k <= 6; k++) grid[b.sr - 6][x + k] = '=';
+        grid[b.sr - 4][x + 2] = 'o';
+        grid[b.sr - 7][x + 5] = 'o';
+        claim(rk, x, x + 6);
+      } else if (kind < 0.5) {
+        const x = findSpan(rk, 4, rng);
+        if (x < 0) continue;
+        const y = b.sr - irnd(rng, 4, 8);
+        if (y - 1 < b.y0) continue;
+        for (let k = 0; k < 3; k++) grid[y][x + k] = '=';
+        grid[y - 1][x + 1] = 'o';
+        claim(rk, x, x + 3);
+      } else if (kind < 0.68) {
+        const n = irnd(rng, 1, 2);
+        const x = findSpan(rk, n + 2, rng);
+        if (x < 0) continue;
+        for (let k = 0; k < n; k++) grid[b.sr][x + 1 + k] = '^';
+        claim(rk, x, x + n + 1);
+      } else if (kind < 0.88) {
+        const x = findSpan(rk, 3, rng);
+        if (x < 0) continue;
+        grid[b.sr][x + 1] = '/';
+        grid[b.sr - 3][x + 1] = '/';
+        claim(rk, x, x + 2);
+      } else if (LAVA_WORLDS.indexOf(world) >= 0) {
+        const x = findSpan(rk, 3, rng);
+        if (x < 0) continue;
+        grid[b.sr][x + 1] = '~';
+        claim(rk, x, x + 2);
+      }
+    }
+  });
+
+  const rows0 = gridRows(grid);
+  const solve = analyse(rows0);
+  if (!solve || !solve.ok) return null;
+  const keyTile = findAll(grid, 'k')[0];
+  if (!solve.reachable(keyTile.x, keyTile.y)) return null;
+  const gemTiles = findAll(grid, 'g');
+  for (let i = 0; i < gemTiles.length; i++) {
+    if (!solve.reachable(gemTiles[i].x, gemTiles[i].y)) return null;
+    if (!solve.detour(gemTiles[i].x, gemTiles[i].y)) return null;
+  }
+
+  // enemies, at most three to a room
+  const perRoom = {};
+  const wantFoes = 12 + irnd(rng, 0, 6);
+  const foeSpots = spread(rng, restSpots(grid, solve, 1, W - 1).filter(function (s) {
+    return !used(grid, s) && roomOf(s.x, s.y) !== startRoom;
+  }), wantFoes + 8, 5);
+  let placed = 0;
+  for (let i = 0; i < foeSpots.length && placed < wantFoes; i++) {
+    const s = foeSpots[i];
+    const rk = roomOf(s.x, s.y);
+    if ((perRoom[rk] || 0) >= 3) continue;
+    perRoom[rk] = (perRoom[rk] || 0) + 1;
+    grid[s.y][s.x] = ENEMIES[world][placed % 2];
+    placed++;
+  }
+  if (placed < 10) return null;
+
+  // weapons, a star and a heart, tucked into side rooms when we can
+  const sideSpots = restSpots(grid, solve, 1, W - 1).filter(function (s) {
+    return !used(grid, s) && !onMain[roomOf(s.x, s.y)];
+  });
+  const anySpots = restSpots(grid, solve, 1, W - 1).filter(function (s) { return !used(grid, s); });
+  const pool = sideSpots.length >= 4 ? sideSpots : anySpots;
+  const gifts = [pick(rng, WEAPONS)];
+  if (rng() < 0.5) gifts.push(pick(rng, WEAPONS));
+  if (rng() < 0.6) gifts.push('*');
+  gifts.push('H');
+  if (inWorld === MAXUP_LEVEL[world]) gifts.push('M');
+  if (rng() < 0.4) gifts.push('B');
+  const giftSpots = spread(rng, pool, gifts.length, 6);
+  giftSpots.forEach(function (s, i) { grid[s.y][s.x] = gifts[i]; });
+
+  // coins as a trail
+  const wantCoins = 30 + irnd(rng, 0, 14);
+  const have = findAll(grid, 'o').length;
+  const coinPool = restSpots(grid, solve, 1, W - 1).filter(function (s) { return !used(grid, s); });
+  const coinSpots = spread(rng, coinPool, Math.max(0, wantCoins - have), 3);
+  coinSpots.forEach(function (s) { grid[s.y][s.x] = 'o'; });
+
+  return {
+    name: LEVEL_NAMES[world][inWorld], world: world, boss: false,
+    kind: 'maze', index: index, rows: gridRows(grid)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+function build() {
+  const levels = [];
+  for (let world = 0; world < 8; world++) {
+    for (let i = 0; i < 6; i++) {
+      const index = world * 6 + i;
+      const boss = i === 5;
+      const kind = (i === 2 || i === 4) ? 'maze' : 'run';
+      const roomRows = (i === 4 && world >= 4) ? 3 : 2;
+      let done = null;
+      let last = ['no attempt made'];
+      for (let att = 0; att < 140 && !done; att++) {
+        const seed = 7 + index * 7919 + att * 997;
+        let cand = null;
+        try {
+          if (boss) cand = buildBoss(world, index, i, seed);
+          else if (kind === 'run') cand = buildRun(world, index, i, seed);
+          else cand = buildMaze(world, index, i, seed, roomRows);
+        } catch (err) {
+          last = ['crash: ' + err.message];
+          cand = null;
+        }
+        if (!cand) continue;
+        const problems = checkLevel(cand);
+        if (!problems.length) done = cand;
+        else last = problems;
+      }
+      if (!done) {
+        console.error('could not build level ' + index + ' (' + LEVEL_NAMES[world][i] + ')');
+        last.slice(0, 6).forEach(function (p) { console.error('   ' + p); });
+        process.exit(1);
+      }
+      levels.push(done);
+      process.stdout.write('.');
+    }
+  }
+  process.stdout.write('\n');
+  return levels;
+}
+
+const levels = build();
+
+// one max up per world at most
+for (let world = 0; world < 8; world++) {
+  let n = 0;
+  levels.filter(function (l) { return l.world === world; }).forEach(function (l) {
+    n += findAll(toGrid(l.rows), 'M').length;
+  });
+  if (n > 1) { console.error('world ' + world + ' has ' + n + ' max ups'); process.exit(1); }
+}
+
+const out = [];
+out.push('/* Generated by tools/genlevels.cjs - do not edit by hand. */');
+out.push('const LEVELS = [');
+levels.forEach(function (lv, i) {
+  out.push('  { name: \'' + lv.name + '\', world: ' + lv.world + ', boss: ' + lv.boss +
+    ', kind: \'' + lv.kind + '\', rows: [');
+  lv.rows.forEach(function (row, j) {
+    out.push('    \'' + row + '\'' + (j === lv.rows.length - 1 ? '' : ','));
+  });
+  out.push('  ] }' + (i === levels.length - 1 ? '' : ','));
 });
+out.push('];');
+out.push('');
+fs.writeFileSync(OUT, out.join('\n'), 'utf8');
 
-const avg = report.reduce(function (s, r) { return s + Number(r.perFeature); }, 0) / report.length;
-console.log('');
-console.log('average columns per thing to do: ' + avg.toFixed(2));
-console.log('chunks in the library: ' + CHUNKS.length);
 console.log('wrote ' + OUT);
+console.log('');
+console.log('idx  world         name              kind  size      foes coins gems');
+levels.forEach(function (lv) {
+  const g = toGrid(lv.rows);
+  const foes = findAll(g, ALL_ENEMY_CH).length;
+  const coins = findAll(g, 'o').length;
+  const gems = findAll(g, 'g').length;
+  console.log(
+    String(lv.index).padStart(3) + '  ' +
+    WORLD_NAMES[lv.world].padEnd(13) + ' ' +
+    lv.name.padEnd(17) + ' ' +
+    (lv.boss ? 'boss' : lv.kind).padEnd(5) + ' ' +
+    (lv.rows[0].length + 'x' + lv.rows.length).padEnd(9) + ' ' +
+    String(foes).padStart(4) + ' ' +
+    String(coins).padStart(5) + ' ' +
+    String(gems).padStart(4));
+});
