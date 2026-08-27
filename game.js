@@ -389,7 +389,7 @@
     'Q': { name: 'MUMMY LORD', w: 26, h: 30, hp: 12, brain: 'mummy', color: '#ded3b4', artDy: 2 },
     'D': { name: 'FIRE DRAGON', w: 34, h: 26, hp: 11, brain: 'dragon', color: '#ff6a00', artDy: 0, fly: true },
     'X': { name: 'SHADOW MASTER', w: 26, h: 30, hp: 13, brain: 'shadow', color: '#b98cff', artDy: 0 },
-    '7': { name: 'STORM BIRD', w: 36, h: 26, hp: 13, brain: 'storm', color: '#bfe4ff', artDy: 0, fly: true },
+    'b': { name: 'STORM BIRD', w: 36, h: 26, hp: 13, brain: 'storm', color: '#bfe4ff', artDy: 0, fly: true },
     '8': { name: 'CRYSTAL QUEEN', w: 28, h: 30, hp: 14, brain: 'queen', color: '#ff8ad8', artDy: 6 },
     '9': { name: 'IRON TITAN', w: 32, h: 30, hp: 16, brain: 'titan', color: '#ffab3d', artDy: 8 }
   };
@@ -403,10 +403,14 @@
     'flame':     { name: 'FLAME', color: '#ff9a2a', dmg: 1, ammo: 50, cd: 6, max: 24, pierce: true, life: 30, speed: 4.8 },
     'laser':     { name: 'LASER', color: '#6ff0ff', dmg: 2, ammo: 16, cd: 18, max: 4, pierce: true, breaks: true, life: 70, speed: 8.2 },
     'boomerang': { name: 'BOOMERANG', color: '#ffd93d', dmg: 2, ammo: 12, cd: 30, max: 1, life: 120, speed: 5.0, returns: true },
-    'bombs':     { name: 'BOMBS', color: '#c8c8d4', dmg: 3, ammo: 10, cd: 34, max: 3, blast: 30, breaks: true, life: 110, speed: 3.6, arc: true }
+    'bombs':     { name: 'BOMBS', color: '#c8c8d4', dmg: 3, ammo: 10, cd: 34, max: 3, blast: 30, breaks: true, life: 110, speed: 3.6, arc: true },
+    'ice':       { name: 'ICE GUN', color: '#8fe8ff', dmg: 1, ammo: 14, cd: 22, max: 3, freeze: 330, life: 80, speed: 5.6 }
   };
-  /* The letter you write in levels.js for each weapon box. */
-  var WEAPON_CHARS = { '1': 'shotgun', '2': 'rocket', '3': 'flame', '4': 'laser', '5': 'boomerang', '6': 'bombs' };
+  /* The letter you write in levels.js for each weapon box. The ice gun box
+     is only there once you buy the ice gun in the shop. */
+  var WEAPON_CHARS = { '1': 'shotgun', '2': 'rocket', '3': 'flame', '4': 'laser', '5': 'boomerang', '6': 'bombs', '7': 'ice' };
+  /* What LUCKY START can hand you. No ice gun until you own it. */
+  var LUCKY_WEAPONS = ['shotgun', 'rocket', 'flame', 'laser', 'boomerang', 'bombs'];
 
   var STAR_TIME = 8 * 60;
   var BOOT_TIME = 14 * 60;
@@ -420,7 +424,7 @@
      so it is still there tomorrow. */
   /* V2 keeps its own save, so the old V1 game in /v1/ never loses your place. */
   var SAVE_KEY = 'ninjaMasterSaveV2';
-  var progress = { max: 0, best: 0, gems: {} };
+  var progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
 
   function loadProgress() {
     try {
@@ -430,6 +434,10 @@
         progress.max = Math.max(0, o.max | 0);
         progress.best = Math.max(0, o.best | 0);
         progress.gems = (o.gems && typeof o.gems === 'object') ? o.gems : {};
+        progress.coins = Math.max(0, o.coins | 0);
+        progress.spentGems = Math.max(0, o.spentGems | 0);
+        progress.buys = (o.buys && typeof o.buys === 'object') ? o.buys : {};
+        progress.medals = (o.medals && typeof o.medals === 'object') ? o.medals : {};
       }
     } catch (e) { /* a browser with no storage still plays fine */ }
     game.best = progress.best;
@@ -439,9 +447,99 @@
     if (game.best > progress.best) { progress.best = game.best; }
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 3, max: progress.max, best: progress.best, gems: progress.gems
+        v: 4, max: progress.max, best: progress.best, gems: progress.gems,
+        coins: progress.coins, spentGems: progress.spentGems,
+        buys: progress.buys, medals: progress.medals
       }));
     } catch (e) { /* ignore */ }
+  }
+
+  /* ---- the shop ----------------------------------------------------------
+     Coins and gems are money. Coins are everywhere, so they buy the things
+     that make you stronger. Gems are rare, three in a level, so they buy the
+     special things. You bank your coins when you finish a level, so dying
+     costs you the coins from that try. */
+
+  var SHOP = [
+    { id: 'heart', name: 'HEART UP', cost: 60, money: 'coin', max: 3,
+      blurb: 'Start every level with 1 more heart.' },
+    { id: 'wind', name: 'SECOND WIND', cost: 120, money: 'coin', max: 1,
+      blurb: 'Once a level, come back with 2 hearts.' },
+    { id: 'lucky', name: 'LUCKY START', cost: 150, money: 'coin', max: 1,
+      blurb: 'Begin each level holding a big weapon.' },
+    { id: 'ice', name: 'ICE GUN', cost: 6, money: 'gem', max: 1,
+      blurb: 'A new gun. Freeze a foe into a block.' },
+    { id: 'radar', name: 'GEM RADAR', cost: 4, money: 'gem', max: 1,
+      blurb: 'Hidden gems shine through the walls.' },
+    { id: 'gold', name: 'GOLD NINJA', cost: 10, money: 'gem', max: 1,
+      blurb: 'Gold suit. Coins are worth double.' }
+  ];
+
+  function bought(id) { return progress.buys[id] | 0; }
+  function has(id) { return bought(id) > 0; }
+  function coinsLeft() { return progress.coins; }
+  function gemsLeft() { return Math.max(0, totalGems() - progress.spentGems); }
+
+  function shopItem(id) {
+    for (var i = 0; i < SHOP.length; i++) { if (SHOP[i].id === id) { return SHOP[i]; } }
+    return null;
+  }
+
+  /* Can you afford it, and is there any left to buy? */
+  function canBuy(it) {
+    if (bought(it.id) >= it.max) { return 'MAXED'; }
+    var have = it.money === 'gem' ? gemsLeft() : coinsLeft();
+    if (have < it.cost) { return 'POOR'; }
+    return 'OK';
+  }
+
+  function buyItem(it) {
+    if (canBuy(it) !== 'OK') { return false; }
+    if (it.money === 'gem') { progress.spentGems += it.cost; }
+    else { progress.coins -= it.cost; }
+    progress.buys[it.id] = bought(it.id) + 1;
+    saveProgress();
+    return true;
+  }
+
+  /* Hearts you start a level with, after anything you bought. */
+  function heartsAtStart() {
+    return Math.min(HEART_CAP, START_HEARTS + bought('heart'));
+  }
+
+  /* ---- medals ------------------------------------------------------------
+     Three per level. Finish with every heart, find all three gems, and pick
+     up every coin. They are only for show, but they give you a reason to go
+     back to a level you already beat. */
+
+  var MEDAL_NAMES = ['NO HIT', 'ALL GEMS', 'ALL COINS'];
+  var MEDAL_COLORS = ['#ff6b6b', '#7ad8c8', '#ffd93d'];
+  var MEDAL_TIPS = [
+    'Finish it without losing a heart.',
+    'Find all three gems.',
+    'Pick up every single coin.'
+  ];
+
+  function medalsOf(levelIndex) {
+    var m = progress.medals[levelIndex];
+    return typeof m === 'number' ? m : 0;
+  }
+  function medalCount(levelIndex) {
+    var m = medalsOf(levelIndex), n = 0;
+    for (var i = 0; i < 3; i++) { if (m & (1 << i)) { n++; } }
+    return n;
+  }
+  function totalMedals() {
+    var n = 0;
+    for (var i = 0; i < LEVELS.length; i++) { n += medalCount(i); }
+    return n;
+  }
+  /* Returns the medals you won this try that you did not already have. */
+  function awardMedals(levelIndex, won) {
+    var had = medalsOf(levelIndex);
+    var fresh = won & ~had;
+    if (fresh) { progress.medals[levelIndex] = had | won; saveProgress(); }
+    return fresh;
   }
 
   /* Gems are remembered for ever, one bit per gem, so finding one is
@@ -506,12 +604,12 @@
   var backdrop = { stars: [], hillFar: [], hillNear: [] };
 
   /* What is picked on the menu screens. */
-  var menu = { world: 0, level: 0, code: ['A', 'A', 'A', 'A'], slot: 0, msg: '', msgT: 0, from: 'title' };
+  var menu = { world: 0, level: 0, shop: 0, code: ['A', 'A', 'A', 'A'], slot: 0, msg: '', msgT: 0, from: 'title' };
   var menuHits = [];
 
   function isMenuMode() {
     return game.mode === 'title' || game.mode === 'worlds' || game.mode === 'levels' ||
-           game.mode === 'code' || game.mode === 'worldclear';
+           game.mode === 'code' || game.mode === 'worldclear' || game.mode === 'shop';
   }
 
   /* A fake wall '%' is NOT solid. It only looks like rock.
@@ -769,7 +867,11 @@
           gems.push({ slot: gemSlot++, x: c * TILE + 3, y: r * TILE + 3, w: 10, h: 11, taken: false, t: (c * 9 + r * 4) % 60 });
           level.grid[r][c] = '.';
         } else if (WEAPON_CHARS[ch]) {
-          weaponBoxes.push({ kind: WEAPON_CHARS[ch], x: c * TILE + 1, y: r * TILE + 2, w: 14, h: 13, taken: false, t: (c * 6 + r * 8) % 60 });
+          /* An ice gun box only appears once you have bought the ice gun
+             in the shop. */
+          if (!(WEAPON_CHARS[ch] === 'ice' && !has('ice'))) {
+            weaponBoxes.push({ kind: WEAPON_CHARS[ch], x: c * TILE + 1, y: r * TILE + 2, w: 14, h: 13, taken: false, t: (c * 6 + r * 8) % 60 });
+          }
           level.grid[r][c] = '.';
         } else if (POWERUPS[ch]) {
           /* No star on a boss level. With a star you just run at the boss
@@ -795,6 +897,18 @@
     buildBackdrop(index + 1);
     resetPlayer();
     buildHint();
+
+    /* How many coins and gems this level holds. The medals need this. */
+    level.coinTotal = coins.length;
+    level.gemTotal = gems.length;
+
+    /* A fresh try at this level. Coins only go in the bank when you win. */
+    game.runCoins = 0;
+    game.coinsGot = 0;
+    game.noHit = true;
+    game.windUsed = false;
+    game.wonMedals = [];
+
     cam.x = clamp(player.x + player.w / 2 - VIEW_W / 2, 0, Math.max(0, level.pxW - VIEW_W));
     cam.y = clamp(player.y + player.h / 2 - VIEW_H / 2, 0, Math.max(0, level.pxH - VIEW_H));
   }
@@ -815,6 +929,13 @@
     };
     safeSpot.x = spawn.x;
     safeSpot.y = spawn.y;
+    /* LUCKY START from the shop hands you a random big weapon straight
+       away, so no level starts you with only ninja stars. */
+    if (has('lucky')) {
+      var lw = LUCKY_WEAPONS[Math.floor(Math.random() * LUCKY_WEAPONS.length)];
+      player.weapon = lw;
+      player.ammo = WEAPONS[lw].ammo;
+    }
   }
 
   /* After losing a heart the ninja comes back at the last safe piece of
@@ -874,6 +995,7 @@
       range: t.range || 0,
       rate: t.rate || 120,
       color: t.color,
+      artDy: t.artDy || 0,
       vx: 0, vy: 0,
       hp: t.hp,
       maxHp: t.hp,
@@ -882,6 +1004,8 @@
       splits: !!t.splits,
       alive: true,
       hurt: 0,
+      frozen: 0,
+      iceSlow: 0,
       cd: 40 + Math.floor(Math.random() * 90),
       animT: Math.random() * 40
     };
@@ -919,7 +1043,11 @@
       phase: 0,
       minions: 0,
       ghostT: 0,
-      animT: 0
+      animT: 0,
+      frozen: 0,
+      iceSlow: 0,
+      raged: false,
+      rageCd: 0
     };
     e.homeY = e.y;
     return e;
@@ -1088,9 +1216,46 @@
       vx: vx, vy: vy || 0, rot: 0,
       life: W.life || 90,
       dmg: W.dmg, pierce: !!W.pierce, breaks: !!W.breaks,
+      freeze: W.freeze || 0,
       blast: W.blast || 0, arc: false, home: false,
       hitList: null
     };
+  }
+
+  /* ---- freezing ----------------------------------------------------------
+     The ice gun turns a normal foe into a block of ice. While it is frozen
+     it cannot move, cannot shoot and cannot hurt you, and you can stand on
+     top of it and jump off. A boss is too big to freeze, so it only slows
+     down for a moment. */
+  function freezeEnemy(e, frames) {
+    if (!e.alive) { return false; }
+    if (e.kind === 'boss') {
+      e.iceSlow = Math.max(e.iceSlow || 0, 40);
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#8fe8ff', 8, 2.4);
+      return false;
+    }
+    var fresh = !(e.frozen > 0);
+    e.frozen = frames;
+    e.vx = 0;
+    e.vy = 0;
+    burst(e.x + e.w / 2, e.y + e.h / 2, '#8fe8ff', fresh ? 12 : 5, 2.6);
+    if (fresh) { Sound.power(); }
+    return fresh;
+  }
+
+  /* The flat top of a block of ice, or -1 when there is none here. */
+  function iceTopUnder(p, oldBottom) {
+    var best = -1;
+    for (var i = 0; i < enemies.length; i++) {
+      var e = enemies[i];
+      if (!e.alive || !(e.frozen > 0)) { continue; }
+      if (p.x + p.w <= e.x + 1 || p.x >= e.x + e.w - 1) { continue; }
+      /* Only land on it if you were above it before you moved. */
+      if (oldBottom > e.y + 4) { continue; }
+      if (p.y + p.h < e.y) { continue; }
+      if (best < 0 || e.y < best) { best = e.y; }
+    }
+    return best;
   }
 
   /* The round bang from a rocket or a bomb. It hurts everything close by
@@ -1147,13 +1312,29 @@
   function hurtPlayer(fromX) {
     if (player.invuln > 0 || player.starT > 0 || player.dying) { return; }
     game.hearts--;
+    game.noHit = false;
     player.invuln = 100;
     player.vx = (player.x + 5 < fromX ? -1 : 1) * 3;
     player.vy = -3.6;
     game.shake = 10;
     Sound.hurt();
     burst(player.x + 5, player.y + 7, '#ff5a5a', 10, 3);
+    if (game.hearts <= 0 && secondWind()) { return; }
     if (game.hearts <= 0) { gameOver(); }
+  }
+
+  /* SECOND WIND from the shop. The first time you run out of hearts in a
+     level it gives you two back instead of a game over. Once per level. */
+  function secondWind() {
+    if (!has('wind') || game.windUsed) { return false; }
+    game.windUsed = true;
+    game.hearts = Math.min(2, game.maxHearts);
+    player.invuln = 150;
+    game.shake = 14;
+    toast('SECOND WIND', '#7fd0ff');
+    Sound.unlock();
+    burst(player.x + 5, player.y + 7, '#7fd0ff', 22, 4);
+    return true;
   }
 
   /* A short word that floats up the screen when you pick something up. */
@@ -1211,6 +1392,7 @@
     if (player.dying) { return; }
     player.dying = true;
     game.hearts--;
+    game.noHit = false;
     game.shake = 14;
     game.mode = 'dead';
     game.timer = 0;
@@ -1236,7 +1418,13 @@
       return;
     }
     game.score += 5;
-    burst(e.x + e.w / 2, e.y + e.h / 2, e.color || '#ffffff', 14, 3.4);
+    if (e.frozen > 0) {
+      /* A frozen foe shatters into ice. */
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#8fe8ff', 18, 4);
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#ffffff', 10, 3);
+    } else {
+      burst(e.x + e.w / 2, e.y + e.h / 2, e.color || '#ffffff', 14, 3.4);
+    }
     Sound.squish();
     /* A big slime splits into two small fast ones. */
     if (e.splits) { splitSlime(e); }
@@ -1256,7 +1444,8 @@
         vx: 0, vy: -3.2,
         hp: t.hp, maxHp: t.hp,
         armour: null, shield: false, splits: false, child: true,
-        alive: true, hurt: 0, cd: 20, animT: 0
+        alive: true, hurt: 0, cd: 20, animT: 0,
+        artDy: t.artDy || 0, frozen: 0, iceSlow: 0
       };
       kid.homeY = kid.y;
       kid.homeX = kid.x;
@@ -1330,17 +1519,39 @@
     clearEdges();
   }
 
+  /* You win the level, so your coins go in the bank and you get your
+     medals. This runs once, on the first frame of the clear screen. */
+  function bankRun() {
+    var idx = game.level;
+    progress.coins += game.runCoins;
+    var won = 0;
+    if (game.noHit) { won |= 1; }
+    if (level && level.gemTotal > 0 && gemCount(idx) >= level.gemTotal) { won |= 2; }
+    if (level && level.coinTotal > 0 && game.coinsGot >= level.coinTotal) { won |= 4; }
+    var fresh = awardMedals(idx, won);
+    game.wonMedals = [];
+    for (var i = 0; i < 3; i++) {
+      if (fresh & (1 << i)) { game.wonMedals.push(MEDAL_NAMES[i]); }
+    }
+    saveProgress();
+    if (game.wonMedals.length) { Sound.unlock(); }
+  }
+
   function step() {
     if (game.mode === 'title') { return updateTitle(); }
     if (game.mode === 'worlds') { return updateWorldSelect(); }
     if (game.mode === 'levels') { return updateLevelSelect(); }
     if (game.mode === 'code') { return updateCodeScreen(); }
+    if (game.mode === 'shop') { return updateShop(); }
     if (game.mode === 'worldclear') { return updateWorldClear(); }
 
     if (game.mode === 'dead') {
       updateParticles();
       if (game.timer > 55) {
-        if (game.hearts <= 0) {
+        if (game.hearts <= 0 && secondWind()) {
+          respawnAtSafeSpot();
+          goMode('play');
+        } else if (game.hearts <= 0) {
           gameOver();
         } else {
           respawnAtSafeSpot();
@@ -1353,6 +1564,7 @@
     if (game.mode === 'clear') {
       updateParticles();
       updateToasts();
+      if (game.timer === 1) { bankRun(); }
       if (game.timer > 100 || (game.timer > 30 && consumeConfirm())) {
         unlockUpTo(game.level + 1);
         saveBest();
@@ -1497,17 +1709,39 @@
     }
   }
 
+  /* The cursor on the world screen covers the world tiles first, then the
+     CODE button, then the SHOP button. That way a keyboard or a game pad can
+     reach every button on this screen, not just the worlds. */
+  function wsCount() { return WORLDS.length + 2; }
+  function wsFix() {
+    var n = wsCount();
+    if (typeof menu.wsel !== 'number' || menu.wsel < 0 || menu.wsel >= n) {
+      menu.wsel = menu.world;
+    }
+  }
+
   function updateWorldSelect() {
+    wsFix();
+    var n = wsCount();
     var h = tappedAction();
     if (h) {
-      if (h.act === 'world') { menu.world = h.i; pickWorld(); }
-      else if (h.act === 'code') { openCode(); }
+      if (h.act === 'world') { menu.world = h.i; menu.wsel = h.i; pickWorld(); }
+      else if (h.act === 'code') { menu.wsel = WORLDS.length; openCode(); }
+      else if (h.act === 'shop') { menu.wsel = WORLDS.length + 1; openShop(); }
       else if (h.act === 'back') { Sound.menu(); goMode('title'); }
       return;
     }
     if (backEdge) { Sound.menu(); goMode('title'); return; }
-    if (navEdge) { menu.world = (menu.world + navEdge + WORLDS.length) % WORLDS.length; Sound.menu(); }
-    if (consumeConfirm()) { pickWorld(); }
+    if (navEdge) {
+      menu.wsel = (menu.wsel + navEdge + n) % n;
+      if (menu.wsel < WORLDS.length) { menu.world = menu.wsel; }
+      Sound.menu();
+    }
+    if (consumeConfirm()) {
+      if (menu.wsel === WORLDS.length) { openCode(); }
+      else if (menu.wsel === WORLDS.length + 1) { openShop(); }
+      else { pickWorld(); }
+    }
   }
 
   function pickWorld() {
@@ -1552,16 +1786,27 @@
     game.level = idx;
     game.world = worldOf(idx);
     game.score = 0;
-    game.maxHearts = START_HEARTS;
-    game.hearts = START_HEARTS;
+    game.maxHearts = heartsAtStart();
+    game.hearts = game.maxHearts;
+    game.runCoins = 0;
+    game.coinsGot = 0;
+    game.noHit = true;
+    game.windUsed = false;
     menu.world = game.world;
     menu.level = idx - firstLevelOf(game.world);
     loadLevel(idx);
     goMode('play');
   }
 
-  function openCode() {
-    menu.code = ['A', 'A', 'A', 'A'];
+  function openShop() {
+    menu.shop = 0;
+    menu.msg = '';
+    menu.msgT = 0;
+    Sound.menu();
+    goMode('shop');
+  }
+
+  function openCode() {    menu.code = ['A', 'A', 'A', 'A'];
     menu.slot = 0;
     menu.msg = '';
     menu.msgT = 0;
@@ -1741,8 +1986,10 @@
 
     p.x += p.vx;
     resolveX(p);
+    var wasBottom = p.y + p.h;
     p.y += p.vy;
     resolveY(p);
+    landOnIce(p, wasBottom);
 
     /* Springs throw you high in the air. */
     if (p.onGround && p.hitTile === 'T') {
@@ -1784,6 +2031,9 @@
     for (var i = 0; i < enemies.length; i++) {
       var e = enemies[i];
       if (!e.alive || e.ghostT > 0) { continue; }
+      /* A block of ice is just scenery. It cannot hurt you and you cannot
+         stomp it, because you stand on it instead. */
+      if (e.frozen > 0) { continue; }
       if (!overlap(p, e)) { continue; }
       var headTop = e.y + (e.kind === 'boss' ? Math.round(e.h * 0.45) : Math.round(e.h * 0.55));
       if (p.vy > 0.8 && (p.y + p.h) < headTop) {
@@ -1808,6 +2058,18 @@
   /* Big enemies take one hit from a stomp. Small ones take two, so a
      jump still feels strong. */
   function stompDamage(e) { return e.maxHp >= 4 ? 1 : 2; }
+
+  /* A block of ice holds you up like a small platform. You can only land on
+     the top of it, so you never get stuck inside one. */
+  function landOnIce(p, wasBottom) {
+    if (p.vy < 0) { return; }
+    var top = iceTopUnder(p, wasBottom);
+    if (top < 0) { return; }
+    p.y = top - p.h;
+    p.vy = 0;
+    p.onGround = true;
+    p.onIce = true;
+  }
 
   /* True when any part of the ninja is inside a tile of this kind. */
   function tileHere(p, ch) {
@@ -1906,8 +2168,25 @@
       e.animT++;
       if (e.hurt > 0) { e.hurt--; }
       if (e.cd > 0) { e.cd--; }
+      if (e.iceSlow > 0) { e.iceSlow--; }
 
       if (e.kind === 'boss') { bossThink(e); continue; }
+
+      /* A frozen foe is a block of ice. It only falls, and it thaws. */
+      if (e.frozen > 0) {
+        e.frozen--;
+        e.vx = 0;
+        e.vy += GRAVITY;
+        if (e.vy > MAX_FALL) { e.vy = MAX_FALL; }
+        e.y += e.vy;
+        resolveY(e);
+        if (e.frozen === 0) {
+          burst(e.x + e.w / 2, e.y + e.h / 2, '#8fe8ff', 10, 2.2);
+          Sound.bonk();
+        }
+        if (e.y > level.pxH + 24) { e.alive = false; }
+        continue;
+      }
 
       if (e.ai === 'float') { updateFloater(e); enemyShoot(e); continue; }
       if (e.ai === 'fly') { updateFlyer(e); enemyShoot(e); continue; }
@@ -2059,17 +2338,49 @@
 
   function bossRage(e) { return e.hp <= Math.ceil(e.maxHp / 2); }
 
+  /* Each boss throws its own kind of thing. */
+  var RAGE_SHOT = {
+    skull: 'bone', frost: 'ice', mummy: 'wrap', dragon: 'fire',
+    storm: 'feather', queen: 'crystal', titan: 'rock', shadow: 'shard'
+  };
+
+  /* PHASE TWO. When a boss drops to half health it screams and throws a whole
+     ring of stuff at once. Then it does it again and again while it is angry.
+     Duck, jump or hide behind a block of ice. */
+  function rageBurst(e) {
+    var kind = RAGE_SHOT[e.brain] || 'bone';
+    var cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+    var n = 8;
+    var tilt = Math.random() * 0.4;
+    for (var i = 0; i < n; i++) {
+      var a = tilt + (i / n) * Math.PI * 2;
+      bones.push({
+        kind: kind, x: cx - 3.5, y: cy - 3.5, w: 7, h: 7,
+        vx: Math.cos(a) * 2.5, vy: Math.sin(a) * 2.5, g: 0, rot: 0, life: 190
+      });
+    }
+    game.shake = Math.max(game.shake, 10);
+    burst(cx, cy, '#ff4d4d', 16, 3.4);
+    Sound.roar();
+  }
+
   function bossThink(e) {
     if (e.jumpCd > 0) { e.jumpCd--; }
     if (e.warpCd > 0) { e.warpCd--; }
     if (e.mouth > 0) { e.mouth--; }
     if (e.swoop > 0) { e.swoop--; }
+    if (e.rageCd > 0) { e.rageCd--; }
 
     if (bossRage(e) && !e.raged) {
       e.raged = true;
       game.shake = 14;
       Sound.roar();
       toastAt(e.x + e.w / 2, e.y - 6, 'ANGRY NOW', '#ff4d4d');
+      rageBurst(e);
+      e.rageCd = 230;
+    } else if (e.raged && e.rageCd <= 0 && e.ghostT <= 0) {
+      rageBurst(e);
+      e.rageCd = 230;
     }
 
     if (e.ghostT > 0) {
@@ -2088,6 +2399,9 @@
     else if (e.brain === 'queen') { brainQueen(e); }
     else if (e.brain === 'titan') { brainTitan(e); }
     else { brainShadow(e); }
+
+    /* A hit from the ice gun does not freeze a boss, but it does slow it. */
+    if (e.iceSlow > 0) { e.vx *= 0.45; e.vy *= 0.45; }
 
     if (e.fly) {
       e.x += e.vx;
@@ -2566,6 +2880,7 @@
           break;
         }
         damageEnemy(e, s.dmg, 'shot');
+        if (s.freeze) { freezeEnemy(e, s.freeze); }
         if (s.pierce) { continue; }
         if (s.home) {
           /* A boomerang keeps flying and comes back. */
@@ -2635,6 +2950,11 @@
       b.x += b.vx;
       b.y += b.vy;
       b.rot += 0.28;
+      if (b.life !== undefined && --b.life <= 0) {
+        burst(b.x + b.w / 2, b.y + b.h / 2, boltColor(b), 4, 1.6);
+        bones.splice(i, 1);
+        continue;
+      }
       var cx = Math.floor((b.x + b.w / 2) / TILE), cy = Math.floor((b.y + b.h / 2) / TILE);
       if (isSolid(tileAt(cx, cy)) || b.y > level.pxH + 20 || b.x < -20 || b.x > level.pxW + 20) {
         burst(b.x + b.w / 2, b.y + b.h / 2, boltColor(b), 4, 1.6);
@@ -2664,6 +2984,8 @@
       if (overlap(c, player)) {
         c.taken = true;
         game.score += 1;
+        game.coinsGot++;
+        game.runCoins += has('gold') ? 2 : 1;
         Sound.coin();
         burst(c.x + 4, c.y + 4, '#ffd93d', 6, 2);
       }
@@ -2953,6 +3275,13 @@
     var SUIT_DARK = '#2a3155';
     var SKIN = '#4f5c8c';
     var RED = '#e8483a';
+    /* GOLD NINJA from the shop. It only changes the colours. */
+    if (has('gold')) {
+      SUIT = '#d9a521';
+      SUIT_DARK = '#9c7212';
+      SKIN = '#f0cf6a';
+      RED = '#fff3b0';
+    }
     if (p.starT > 0) {
       var RAINBOW = ['#ffd93d', '#ff6b6b', '#5ad2ff', '#a8ff5a'];
       var k = Math.floor(game.frame / 4) % 4;
@@ -3112,6 +3441,23 @@
         ctx.beginPath(); ctx.arc(-1.2, -1.2, 1.4, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = (game.frame % 8 < 4) ? '#ffd93d' : '#ff5a4a';
         ctx.fillRect(-1, -7, 2, 3);
+      } else if (s.wk === 'ice') {
+        ctx.rotate(s.rot * 0.8);
+        ctx.fillStyle = 'rgba(143,232,255,0.35)';
+        ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
+        /* a six point snow flake */
+        ctx.strokeStyle = '#eaffff';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (var a = 0; a < 3; a++) {
+          var ang = a * Math.PI / 3;
+          ctx.moveTo(-Math.cos(ang) * 4.5, -Math.sin(ang) * 4.5);
+          ctx.lineTo(Math.cos(ang) * 4.5, Math.sin(ang) * 4.5);
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI * 2); ctx.fill();
       } else {
         ctx.rotate(s.rot);
         ctx.fillStyle = '#dfe7f2';
@@ -3397,6 +3743,15 @@
     if (!boss || (!boss.alive && bossDown <= 0)) { return; }
     var w = 180, x = (VIEW_W - w) / 2, y = 34;
     var pct = clamp(boss.hp / boss.maxHp, 0, 1);
+    var mad = boss.raged && boss.alive;
+    if (mad) {
+      /* The bar glows red when the boss is angry. */
+      ctx.save();
+      ctx.globalAlpha = 0.25 + Math.sin(game.frame * 0.2) * 0.15;
+      ctx.fillStyle = '#ff4d4d';
+      ctx.fillRect(x - 5, y - 5, w + 10, 16);
+      ctx.restore();
+    }
     ctx.fillStyle = 'rgba(4,6,14,0.75)';
     ctx.fillRect(x - 2, y - 2, w + 4, 10);
     ctx.fillStyle = '#3a2030';
@@ -3405,7 +3760,8 @@
     ctx.fillRect(x, y, Math.round(w * pct), 6);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.fillRect(x, y, Math.round(w * pct), 2);
-    text(boss.bossName || 'BOSS', VIEW_W / 2, y + 13, 9, '#ffffff');
+    text(boss.bossName || 'BOSS', VIEW_W / 2, y + 13, 9, mad ? '#ffb0b0' : '#ffffff');
+    if (mad) { text('PHASE 2', VIEW_W / 2, y + 23, 8, '#ff7a7a'); }
   }
 
   function drawParticles() {
@@ -3462,7 +3818,49 @@
 
     drawWeaponHUD();
     drawGemHUD();
+    drawGemRadar();
     drawBossBar();
+  }
+
+  /* GEM RADAR from the shop. A green arrow at the edge of the screen points
+     at every gem you have not picked up yet, even through walls. */
+  function drawGemRadar() {
+    if (!has('radar') || !gems.length) { return; }
+    var pulse = 0.55 + Math.sin(game.frame * 0.13) * 0.25;
+    for (var i = 0; i < gems.length; i++) {
+      var g = gems[i];
+      if (g.taken) { continue; }
+      var gx = g.x + 5 - cam.x, gy = g.y + 5 - cam.y;
+      var onScreen = gx > 6 && gx < VIEW_W - 6 && gy > 40 && gy < VIEW_H - 24;
+      if (onScreen) {
+        /* Close enough to see. Ring it so it stands out. */
+        ctx.save();
+        ctx.globalAlpha = pulse * 0.8;
+        ctx.strokeStyle = '#7ad8c8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(gx, gy, 11, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.restore();
+        continue;
+      }
+      /* Off screen. Put an arrow on the edge pointing the way. */
+      var px = player.x + 5 - cam.x, py = player.y + 7 - cam.y;
+      var dx = gx - px, dy = gy - py;
+      var a = Math.atan2(dy, dx);
+      var ex = clamp(px + Math.cos(a) * 400, 14, VIEW_W - 14);
+      var ey = clamp(py + Math.sin(a) * 400, 46, VIEW_H - 28);
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      ctx.translate(ex, ey);
+      ctx.fillStyle = 'rgba(4,6,14,0.65)';
+      ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.rotate(a);
+      ctx.fillStyle = '#7ad8c8';
+      ctx.beginPath();
+      ctx.moveTo(7, 0); ctx.lineTo(-3, -5); ctx.lineTo(-1, 0); ctx.lineTo(-3, 5);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
   }
 
   /* Bottom left: the weapon you hold and how many shots are left. */
@@ -3603,6 +4001,7 @@
   }
 
   function drawWorldSelect() {
+    wsFix();
     menuTop('PICK A WORLD', 'levels done: ' + Math.min(progress.max, LEVELS.length) + ' of ' + LEVELS.length);
     menuHits = [];
     var cols = 4, rows = Math.ceil(WORLDS.length / cols);
@@ -3615,7 +4014,7 @@
       var x = x0 + col * (bw + gap);
       var y = y0 + row * (bh + gap);
       var open = worldUnlocked(i);
-      var on = menu.world === i;
+      var on = menu.wsel === i;
       box(x, y, bw, bh, on, !open, wd.tint);
       hit(x, y, bw, bh, 'world', i);
 
@@ -3640,14 +4039,43 @@
     }
 
     var cy2 = y0 + rows * (bh + gap) + 4;
-    var cx = VIEW_W / 2 - 55;
-    box(cx, cy2, 110, 20, false, false, '#b98cff');
+    var cx = VIEW_W / 2 - 114;
+    box(cx, cy2, 110, 20, menu.wsel === WORLDS.length, false, '#b98cff');
     hit(cx, cy2, 110, 20, 'code', 0);
-    text('I HAVE A CODE', VIEW_W / 2, cy2 + 14, 11, '#ffffff');
+    text('I HAVE A CODE', cx + 55, cy2 + 14, 11, '#ffffff');
 
-    text('ARROWS to pick.  SPACE to go in.  Or tap.', VIEW_W / 2, cy2 + 34, 9, 'rgba(255,255,255,0.75)');
+    var sx = VIEW_W / 2 + 4;
+    box(sx, cy2, 110, 20, menu.wsel === WORLDS.length + 1, false, '#ffd93d');
+    hit(sx, cy2, 110, 20, 'shop', 0);
+    text('SHOP', sx + 40, cy2 + 14, 11, '#ffffff');
+    drawCoin(sx + 62, cy2 + 6);
+    text(String(coinsLeft()), sx + 72, cy2 + 14, 9, '#ffd93d', 'left');
+
+    text('ARROWS move to any button.  SPACE picks it.  Or tap.', VIEW_W / 2, cy2 + 34, 9, 'rgba(255,255,255,0.75)');
     backBox();
     menuFoot('', 'BEST ' + game.best);
+  }
+
+  /* A small gold coin, used on the menus. */
+  function drawCoin(x, y) {
+    ctx.fillStyle = '#05060d';
+    ctx.fillRect(x - 1, y - 1, 8, 10);
+    ctx.fillStyle = '#ffd93d';
+    ctx.fillRect(x, y, 6, 8);
+    ctx.fillStyle = '#fff5b0';
+    ctx.fillRect(x + 1, y + 1, 2, 3);
+  }
+
+  /* A small green gem, used on the menus. */
+  function drawGemIcon(x, y) {
+    ctx.fillStyle = '#05060d';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#7ad8c8';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 4.6); ctx.lineTo(x + 3.7, y); ctx.lineTo(x, y + 4.6); ctx.lineTo(x - 3.7, y);
+    ctx.closePath(); ctx.fill();
   }
 
   function worldGems(w) {
@@ -3700,6 +4128,17 @@
           ctx.moveTo(gx, gy - 4); ctx.lineTo(gx + 3, gy); ctx.lineTo(gx, gy + 4); ctx.lineTo(gx - 3, gy);
           ctx.closePath(); ctx.fill();
         }
+        /* Three little medals show the extra jobs you have done. */
+        var md = medalsOf(idx);
+        for (var m = 0; m < 3; m++) {
+          var mx = x + 10 + m * 9, my = y + bh - 15;
+          ctx.fillStyle = (md & (1 << m)) ? MEDAL_COLORS[m] : 'rgba(255,255,255,0.14)';
+          ctx.beginPath(); ctx.arc(mx, my, 3.2, 0, Math.PI * 2); ctx.fill();
+          if (md & (1 << m)) {
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.fillRect(mx - 2, my - 2, 1.6, 1.6);
+          }
+        }
       }
       text(def ? def.name : '?', x + bw / 2, y + 58, 8, open ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)');
     }
@@ -3744,6 +4183,99 @@
     text('Then press SPACE or tap GO.', VIEW_W / 2, 231, 9, 'rgba(255,255,255,0.75)');
     backBox();
     menuFoot('', '');
+  }
+
+  /* ---- the shop screen -------------------------------------------------- */
+
+  function drawShop() {
+    menuTop('NINJA SHOP', '');
+    menuHits = [];
+
+    /* Your money, at the top. */
+    drawCoin(VIEW_W / 2 - 88, 39);
+    text(String(coinsLeft()) + ' COINS', VIEW_W / 2 - 76, 46, 11, '#ffd93d', 'left');
+    drawGemIcon(VIEW_W / 2 + 32, 46);
+    text(String(gemsLeft()) + ' GEMS', VIEW_W / 2 + 40, 46, 11, '#7ad8c8', 'left');
+
+    var bw = 176, bh = 42, gap = 6;
+    var x0 = Math.round((VIEW_W - (2 * bw + gap)) / 2), y0 = 56;
+
+    for (var i = 0; i < SHOP.length; i++) {
+      var it = SHOP[i];
+      var col = i % 2, row = Math.floor(i / 2);
+      var x = x0 + col * (bw + gap);
+      var y = y0 + row * (bh + gap);
+      var state = canBuy(it);
+      var on = menu.shop === i;
+      var gem = it.money === 'gem';
+      box(x, y, bw, bh, on, state !== 'OK', gem ? '#7ad8c8' : '#ffd93d');
+      hit(x, y, bw, bh, 'buy', i);
+
+      var nameCol = state === 'MAXED' ? '#7fd05f' : '#ffffff';
+      text(it.name, x + 7, y + 13, 11, nameCol, 'left');
+      text(it.blurb, x + 7, y + 26, 8, 'rgba(255,255,255,0.75)', 'left');
+
+      /* the price, or a tick when you own it all */
+      if (state === 'MAXED') {
+        text('OWNED', x + bw - 8, y + 13, 10, '#7fd05f', 'right');
+      } else {
+        if (gem) { drawGemIcon(x + bw - 40, y + 11); }
+        else { drawCoin(x + bw - 44, y + 7); }
+        text(String(it.cost), x + bw - 8, y + 13, 11,
+          state === 'POOR' ? '#ff6b6b' : (gem ? '#7ad8c8' : '#ffd93d'), 'right');
+      }
+
+      /* how many you have, when you can buy more than one */
+      if (it.max > 1) {
+        text(bought(it.id) + '/' + it.max, x + bw - 8, y + 36, 9, 'rgba(255,255,255,0.7)', 'right');
+      } else if (state === 'MAXED') {
+        text('YES', x + bw - 8, y + 36, 9, '#7fd05f', 'right');
+      }
+    }
+
+    var fy = y0 + 3 * (bh + gap) + 8;
+    text('Coins go in the bank when you FINISH a level.', VIEW_W / 2, fy, 9, 'rgba(255,255,255,0.75)');
+    text('Play a level again to get its coins again.', VIEW_W / 2, fy + 12, 9, 'rgba(255,255,255,0.75)');
+    text('MEDALS: ' + totalMedals() + '/' + (LEVELS.length * 3), VIEW_W / 2, fy + 26, 10, '#ffd93d');
+    backBox();
+    menuFoot('', 'SPACE buys');
+  }
+
+  function updateShop() {
+    var h = tappedAction();
+    if (h) {
+      if (h.act === 'buy') { menu.shop = h.i; doBuy(); }
+      else if (h.act === 'back') { Sound.menu(); goMode('worlds'); }
+      return;
+    }
+    if (backEdge) { Sound.menu(); goMode('worlds'); return; }
+    if (navEdge) {
+      menu.shop = (menu.shop + navEdge + SHOP.length) % SHOP.length;
+      Sound.menu();
+      return;
+    }
+    if (consumeConfirm()) { doBuy(); }
+  }
+
+  function doBuy() {
+    var it = SHOP[menu.shop];
+    var state = canBuy(it);
+    if (state === 'MAXED') {
+      Sound.deny();
+      menu.msg = 'YOU ALREADY HAVE IT';
+      menu.msgT = 130;
+      return;
+    }
+    if (state === 'POOR') {
+      Sound.deny();
+      menu.msg = 'NOT ENOUGH ' + (it.money === 'gem' ? 'GEMS' : 'COINS');
+      menu.msgT = 130;
+      return;
+    }
+    buyItem(it);
+    Sound.unlock();
+    menu.msg = it.name + ' IS YOURS';
+    menu.msgT = 150;
   }
 
   function drawWorldClear() {
@@ -5230,6 +5762,32 @@
         [x + 3, y + 5, 1, 1, '#c98a17'],
         [x + 9, y + 4, 1, 1, '#c98a17']
       ];
+    } else if (kind === 'ice') {
+      p = [
+        [x + 0, y + 4, 7, 4, '#5a7a8c'],
+        [x + 0, y + 4, 7, 1, '#9fc4d6'],
+        [x + 0, y + 7, 7, 1, '#33505e'],
+        [x + 1, y + 5, 2, 2, '#8fe8ff'],
+        [x + 6, y + 3, 3, 6, '#9fc4d6'],
+        [x + 4, y + 8, 2, 3, '#5a7a8c'],
+        [x + 9, y + 5, 3, 2, '#8fe8ff'],
+        [x + 9, y + 5, 3, 1, '#ffffff'],
+        [x + 8, y + 2, 1, 3, '#eaffff'],
+        [x + 8, y + 8, 1, 3, '#eaffff'],
+        [x + 10, y + 1, 1, 1, '#ffffff'],
+        [x + 11, y + 9, 1, 1, '#ffffff']
+      ];
+    } else if (kind === 'star') {
+      p = [
+        [x + 5, y + 0, 2, 12, '#dfe7f2'],
+        [x + 0, y + 5, 12, 2, '#dfe7f2'],
+        [x + 5, y + 0, 1, 12, '#ffffff'],
+        [x + 0, y + 5, 12, 1, '#ffffff'],
+        [x + 3, y + 3, 6, 6, '#b9c4d1'],
+        [x + 4, y + 4, 4, 4, '#8fa0b8'],
+        [x + 5, y + 5, 2, 2, '#3a4250'],
+        [x + 3, y + 3, 3, 1, '#f2f7ff']
+      ];
     } else {
       p = [
         [x + 3, y + 3, 5, 1, '#3a4250'],
@@ -5475,11 +6033,12 @@
         'f': drawDrone, 'j': drawSentry,
         'K': drawSkullKing, 'J': drawFrostGiant, 'Q': drawMummyLord,
         'D': drawFireDragon, 'X': drawShadowMaster,
-        '7': drawStormBird, '8': drawCrystalQueen, '9': drawIronTitan
+        'b': drawStormBird, '8': drawCrystalQueen, '9': drawIronTitan
       };
     }
     var fn = ART[e.char] || (e.kind === 'boss' ? drawSkullKing : drawZombie);
     var flash = e.hurt > 6 && (game.frame % 4 < 2);
+    if (e.kind === 'boss' && e.raged) { drawRageAura(e); }
     if (flash) { ctx.globalAlpha = ctx.globalAlpha * 0.5; }
     if (e.artDy) {
       ctx.save();
@@ -5492,6 +6051,42 @@
     if (flash) { ctx.globalAlpha = ctx.globalAlpha * 2; }
     if (e.kind !== 'boss') { drawEnemyPips(e); }
     if (e.shieldT > 0) { drawBossShield(e); }
+    if (e.frozen > 0) { drawIceBlock(e); }
+  }
+
+  /* A red glow round an angry boss in phase two. */
+  function drawRageAura(e) {
+    var cx = e.x + e.w / 2, cy = e.y + e.h / 2 - e.artDy;
+    var r = Math.max(e.w, e.h) * 0.78 + Math.sin(game.frame * 0.18) * 2.2;
+    ctx.save();
+    ctx.globalAlpha = 0.20 + Math.sin(game.frame * 0.2) * 0.09;
+    ctx.fillStyle = '#ff2f2f';
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    if (game.frame % 6 === 0) {
+      burst(cx + (Math.random() - 0.5) * e.w, e.y + e.h - e.artDy, '#ff5a4a', 1, 1.2);
+    }
+  }
+
+  /* A frozen foe sits inside a block of ice. It flashes near the end so you
+     know it is about to wake up. */
+  function drawIceBlock(e) {
+    var x = Math.round(e.x - 1), y = Math.round(e.y - (e.artDy || 0) - 1);
+    var w = e.w + 2, h = e.h + 2;
+    var thaw = e.frozen < 60 && (game.frame % 8 < 4);
+    ctx.save();
+    ctx.globalAlpha = thaw ? 0.42 : 0.66;
+    ctx.fillStyle = '#8fe8ff';
+    ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = thaw ? 0.55 : 0.9;
+    ctx.strokeStyle = '#eaffff';
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    /* two bright streaks so it reads as ice, not just a blue square */
+    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x + 2, y + 2, 2, Math.max(2, h - 6));
+    ctx.fillRect(x + w - 5, y + 4, 1, Math.max(2, h - 9));
+    ctx.restore();
   }
 
   /* Little dots above a tough bad guy show how many hits are left. */
@@ -5500,7 +6095,7 @@
     var n = e.maxHp;
     var w = n * 4 - 1;
     var x = Math.round(e.x + e.w / 2 - w / 2);
-    var y = Math.round(e.y - e.artDy - 5);
+    var y = Math.round(e.y - (e.artDy || 0) - 5);
     for (var i = 0; i < n; i++) {
       ctx.fillStyle = '#05060d';
       ctx.fillRect(x + i * 4 - 1, y - 1, 5, 4);
@@ -5535,6 +6130,7 @@
     if (game.mode === 'worlds') { drawWorldSelect(); return; }
     if (game.mode === 'levels') { drawLevelSelect(); return; }
     if (game.mode === 'code') { drawCodeScreen(); return; }
+    if (game.mode === 'shop') { drawShop(); return; }
     if (game.mode === 'worldclear') { drawWorldClear(); return; }
 
     drawBackground();
@@ -5585,10 +6181,14 @@
     drawHUD();
 
     if (game.mode === 'clear') {
-      drawOverlayCentre([
+      var lines = [
         { t: 'LEVEL CLEAR', s: 30, c: '#ffd93d' },
-        { t: 'Score ' + game.score, s: 14 }
-      ]);
+        { t: 'Score ' + game.score + '    Coins ' + game.runCoins, s: 14 }
+      ];
+      if (game.wonMedals && game.wonMedals.length) {
+        lines.push({ t: 'NEW MEDAL:  ' + game.wonMedals.join('  +  '), s: 13, c: '#7fd05f' });
+      }
+      drawOverlayCentre(lines);
     } else if (game.mode === 'dead') {
       drawOverlayCentre([{ t: 'OUCH', s: 30, c: '#ff6b6b' }]);
     } else if (game.mode === 'gameover') {
@@ -5635,6 +6235,8 @@
     get powerups() { return powerups; },
     get boss() { return boss; },
     get flag() { return flag; },
+    get cam() { return cam; },
+    get menuHits() { return menuHits; },
     get menu() { return menu; },
     get progress() { return progress; },
     get keys() { return keys; },
@@ -5659,10 +6261,23 @@
     giveWeapon: function (k) { takeWeapon(k); },
     unlockAll: function () { progress.max = LEVELS.length - 1; saveProgress(); },
     wipeSave: function () {
-      progress = { max: 0, best: 0, gems: {} };
+      progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
       game.best = 0;
       saveProgress();
-    }
+    },
+    /* shop and medal helpers, for testing */
+    shop: SHOP,
+    medalNames: MEDAL_NAMES,
+    buy: function (id) { var it = shopItem(id); return it ? buyItem(it) : false; },
+    owns: function (id) { return bought(id); },
+    coinsLeft: coinsLeft,
+    gemsLeft: gemsLeft,
+    totalGems: totalGems,
+    totalMedals: totalMedals,
+    medalsOf: medalsOf,
+    giveCoins: function (n) { progress.coins += n | 0; saveProgress(); },
+    freeze: function (i, f) { return freezeEnemy(enemies[i], f === undefined ? 330 : f); },
+    openShop: openShop
   };
 
   loadProgress();

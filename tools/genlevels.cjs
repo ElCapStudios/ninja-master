@@ -59,11 +59,22 @@ const ENEMIES = [
   ['Z', 'S'], ['W', 'V'], ['U', 'C'], ['I', 'G'],
   ['N', 'Y'], ['A', 'E'], ['L', 'O'], ['f', 'j']
 ];
-const BOSSES = ['K', 'J', 'Q', 'D', 'X', '7', '8', '9'];
+/* The Sky Temple boss used to be '7'. The digit is now the ice gun box, and
+   game.js reads a weapon box before it reads a boss, so the two cannot share
+   a letter. The Storm Bird moved to 'b'. Every upper case letter is already
+   taken, so a lower case one it is. */
+const BOSSES = ['K', 'J', 'Q', 'D', 'X', 'b', '8', '9'];
 const ALL_ENEMY_CH = 'ZSWVUCIGNYAELOfj';
-const ALL_BOSS_CH = 'KJQDX789';
-const WEAPONS = ['1', '2', '3', '4', '5', '6'];
-const LEGAL = '.#=^~T%+|/PFoHM*BRkg123456' + ALL_ENEMY_CH + ALL_BOSS_CH;
+const ALL_BOSS_CH = 'KJQDXb89';
+/* Weapon boxes. '7' is the ice gun. */
+const WEAPONS = ['1', '2', '3', '4', '5', '6', '7'];
+/* The ice gun ('7') has to be bought with gems, so a level that only had a '7'
+   box would give a new player no weapon at all. Every level must therefore have
+   at least one box from this core list, and '7' can only ever be an extra. */
+const CORE_WEAPONS = ['1', '2', '3', '4', '5', '6'];
+const CORE_WEAPON_CH = '123456';
+const ALL_WEAPON_CH = '1234567';
+const LEGAL = '.#=^~T%+|/PFoHM*BRkg' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 
 // lava and deep water belong only to Fire Keep and Deep Cave
 const LAVA_WORLDS = [3, 6];
@@ -397,7 +408,7 @@ function countFeatures(rows) {
     if (top !== null && lastTop !== null && top !== lastTop) n++;
     if (top !== null) lastTop = top;
   }
-  n += findAll(toGrid(rows), ALL_ENEMY_CH + ALL_BOSS_CH + 'THM*BRkg123456+').length;
+  n += findAll(toGrid(rows), ALL_ENEMY_CH + ALL_BOSS_CH + 'THM*BRkg' + ALL_WEAPON_CH + '+').length;
   return n;
 }
 
@@ -587,13 +598,30 @@ function checkLevel(level) {
     say('a maze wants at most one star');
   }
 
-  const weapons = findAll(grid, '123456');
+  /* The level's real weapon must be one you already own. Ice boxes ('7') are a
+     bonus you can only use after buying the ice gun, so they never count as
+     the level's weapon, but they still have to be reachable and stand on
+     something solid. */
+  const weapons = findAll(grid, CORE_WEAPON_CH);
   if (weapons.length < 1 || weapons.length > 2) say('wants 1 or 2 weapons, found ' + weapons.length);
+  const iceBoxes = findAll(grid, '7');
+  if (iceBoxes.length > 2) say('wants at most 2 ice boxes, found ' + iceBoxes.length);
+  if (boss && iceBoxes.length) say('a boss level must have no ice box, a boss cannot be frozen');
   if (kind === 'run') {
     weapons.forEach(function (wp) {
       if (wp.x > W * 0.68) say('a weapon at ' + wp.x + ' is past the first two thirds');
     });
   }
+  /* A weapon box you cannot stand on is a box you cannot pick up. */
+  weapons.concat(iceBoxes).forEach(function (wp) {
+    const under = wp.y + 1 < H ? rows[wp.y + 1][wp.x] : '#';
+    if (SOLID_SET.indexOf(under) < 0 && rows[wp.y][wp.x] !== '|') {
+      say('the weapon "' + wp.ch + '" at ' + wp.x + ',' + wp.y + ' stands on nothing');
+    }
+    if (solve.ok && !solve.reachable(wp.x, wp.y)) {
+      say('the weapon "' + wp.ch + '" at ' + wp.x + ',' + wp.y + ' cannot be reached');
+    }
+  });
 
   const coins = findAll(grid, 'o').length;
   const foes = findAll(grid, ALL_ENEMY_CH).length;
@@ -907,6 +935,18 @@ function spread(rng, spots, want, minD) {
 
 function used(grid, s) { return grid[s.y][s.x] !== '.'; }
 
+/* Ice gun boxes are a BONUS, not the level's weapon. You have to buy the ice
+   gun with gems first, so a '7' box is worth nothing until you own it. That is
+   why this runs LAST in every builder, after the real weapon box is already
+   placed, and why the checkers never count a '7' as the level's weapon. */
+function addIceBoxes(rng, grid, solve, lo, hi, want) {
+  if (want <= 0) return;
+  const pool = restSpots(grid, solve, lo, hi).filter(function (s) {
+    return !used(grid, s);
+  });
+  spread(rng, pool, want, 12).forEach(function (s) { grid[s.y][s.x] = '7'; });
+}
+
 // ---------------------------------------------------------------------------
 // run levels
 // ---------------------------------------------------------------------------
@@ -971,7 +1011,7 @@ function buildRun(world, index, inWorld, seed) {
   const wpSpots = spread(rng, restSpots(grid, solve, 14, Math.floor(W * 0.6))
     .filter(function (s) { return !used(grid, s); }), wCount, 25);
   if (!wpSpots.length) return null;
-  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, WEAPONS); });
+  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, CORE_WEAPONS); });
 
   // helpers
   const extra = [];
@@ -991,6 +1031,8 @@ function buildRun(world, index, inWorld, seed) {
   const coinSpots = spread(rng, restSpots(grid, solve, 6, W - 8)
     .filter(function (s) { return !used(grid, s); }), need, 3);
   coinSpots.forEach(function (s) { grid[s.y][s.x] = 'o'; });
+
+  addIceBoxes(rng, grid, solve, 6, W - 8, rng() < 0.5 ? (rng() < 0.25 ? 2 : 1) : 0);
 
   return {
     name: LEVEL_NAMES[world][inWorld], world: world, boss: false,
@@ -1055,7 +1097,7 @@ function buildBoss(world, index, inWorld, seed) {
   const wpSpots = spread(rng, restSpots(grid, solve, 14, Math.floor(W * 0.6))
     .filter(function (s) { return !used(grid, s); }), 1, 10);
   if (!wpSpots.length) return null;
-  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, WEAPONS); });
+  wpSpots.forEach(function (s) { grid[s.y][s.x] = pick(rng, CORE_WEAPONS); });
 
   const hSpots = spread(rng, restSpots(grid, solve, 20, head[0].length - 2)
     .filter(function (s) { return !used(grid, s); }), 1, 5);
@@ -1445,8 +1487,8 @@ function buildMaze(world, index, inWorld, seed, roomRows) {
   });
   const anySpots = restSpots(grid, solve, 1, W - 1).filter(function (s) { return !used(grid, s); });
   const pool = sideSpots.length >= 4 ? sideSpots : anySpots;
-  const gifts = [pick(rng, WEAPONS)];
-  if (rng() < 0.5) gifts.push(pick(rng, WEAPONS));
+  const gifts = [pick(rng, CORE_WEAPONS)];
+  if (rng() < 0.5) gifts.push(pick(rng, CORE_WEAPONS));
   if (rng() < 0.6) gifts.push('*');
   gifts.push('H');
   if (inWorld === MAXUP_LEVEL[world]) gifts.push('M');
@@ -1460,6 +1502,8 @@ function buildMaze(world, index, inWorld, seed, roomRows) {
   const coinPool = restSpots(grid, solve, 1, W - 1).filter(function (s) { return !used(grid, s); });
   const coinSpots = spread(rng, coinPool, Math.max(0, wantCoins - have), 3);
   coinSpots.forEach(function (s) { grid[s.y][s.x] = 'o'; });
+
+  addIceBoxes(rng, grid, solve, 1, W - 1, rng() < 0.55 ? (rng() < 0.3 ? 2 : 1) : 0);
 
   return {
     name: LEVEL_NAMES[world][inWorld], world: world, boss: false,

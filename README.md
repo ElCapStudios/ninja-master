@@ -82,12 +82,65 @@ what you find and you use it.
 | Laser | 2 | 16 | Goes straight through enemies. Smashes cracked blocks |
 | Boomerang | 2 | 12 | Flies out and comes back. It hits twice, once each way |
 | Bombs | 3 | 10 | Falls in an arc. Big blast. Smashes cracked blocks |
+| Ice Gun | 1 | 14 | **Buy it in the shop.** Turns an enemy into a block of ice. Stand on the block to get up high |
 
 The weapon you hold is shown at the top left, with the ammo left.
 
+### The Ice Gun
+
+The Ice Gun is not in the game until you buy it in the shop. After that, ice
+gun boxes show up in 14 places across the game.
+
+- Shoot an enemy and it freezes into a **block of ice**.
+- The block is solid on **top**. Jump on it to reach high places.
+- A frozen enemy cannot move and cannot hurt you.
+- It thaws after a few seconds. The block flashes just before it wakes up.
+- Hit a frozen enemy with any other weapon and the block shatters.
+- A **boss cannot be frozen**. It only slows down for a moment.
+- The shot is weak, only 1 damage. It is for holding enemies still and for
+  climbing, not for winning fights.
+
+## The shop
+
+Beat a level and the coins you picked up go into your **bank**. Now you can
+spend them.
+
+Go to **PICK A WORLD**, then **SHOP**.
+
+| Thing | Cost | What it does |
+| --- | --- | --- |
+| Heart Up | 60 coins | Start every level with 1 more heart. You can buy it 3 times |
+| Second Wind | 120 coins | Once in a level, when your hearts run out, you come back with 2 hearts |
+| Lucky Start | 150 coins | Begin every level holding a big weapon instead of ninja stars |
+| Ice Gun | 6 gems | A new gun. See above |
+| Gem Radar | 4 gems | Arrows at the edge of the screen point at gems you have not found |
+| Gold Ninja | 10 gems | Your ninja wears a gold suit, and every coin you pick up is worth **two** |
+
+Two things to know:
+
+- Coins go in the bank when you **finish** a level. If you die, you lose that
+  run's coins. Play the level again to get them again.
+- Gems are spent, but the game still remembers you **found** them. Your gem
+  count on the level screen never goes down.
+
+## Medals
+
+Every level has 3 medals. There are 144 in the whole game.
+
+| Medal | How to get it |
+| --- | --- |
+| Red: **NO HIT** | Finish the level without losing a single heart |
+| Green: **ALL GEMS** | Find all 3 gems in that level |
+| Gold: **ALL COINS** | Pick up every coin in that level |
+
+The dots at the bottom of each box on the level screen show the medals you
+have. A grey dot means you have not got that one yet. The shop screen shows
+your total.
+
 ## Enemies
 
-Every enemy needs **more than one hit**.
+Every enemy needs **more than one hit**. Small dots above its head show how
+many hits it has left.
 
 | Enemy | Hits | What it does |
 | --- | --- | --- |
@@ -116,6 +169,13 @@ From the title screen you go to **PICK A WORLD**. Then you pick a level.
 - Finish a level and the next one opens.
 - Beat a boss and the next **world** opens.
 - A small green square means you already finished that level.
+- The dots at the bottom of a box are your **medals** for that level.
+- The **SHOP** button is on the world screen, next to I HAVE A CODE.
+
+On the world screen the **left and right arrows** move over the 8 worlds, then
+onto **I HAVE A CODE**, then onto **SHOP**. **SPACE** picks whichever one is
+lit up. So every button works with a keyboard, and every button works with a
+tap. Nothing on this screen needs a mouse or a finger only.
 
 The game **remembers** what you have opened. It saves it in the browser, so it
 is still there tomorrow. It saves on that device only.
@@ -139,7 +199,8 @@ phone.
 - Spikes and lava take a heart. You come back at the last **safe** spot, not at
   the start.
 - An enemy takes a heart if it touches you.
-- Coins give you points. The flag gives you 25 points.
+- Coins give you points, **and** they are money. See the shop.
+- The flag gives you 25 points.
 - You get 1 heart back at the end of every level.
 - When your hearts run out you can try the **same** level again with full
   hearts. You never lose your place.
@@ -148,7 +209,8 @@ phone.
 
 | Thing | What it is |
 | --- | --- |
-| **Gem** | 3 hidden gems in every level. 144 in the whole game. Once you find one it is yours for ever, even if you die |
+| **Gem** | 3 hidden gems in every level. 144 in the whole game. Once you find one it is yours for ever, even if you die. Gems are also money in the shop |
+| **Coin** | Points, and money. They go in the bank when you **finish** the level |
 | **Key** | Opens the locked door in the same level |
 | **Fake wall** | A block of rock you can **walk straight through**. There is always something behind it |
 | **Cracked block** | Only a Rocket, a Laser or a Bomb can smash it |
@@ -219,8 +281,16 @@ A yellow spring on the ground throws you very high. Higher than any jump.
 
 Boss levels have no flag. To finish one you must beat the boss.
 
-Every boss has a green bar at the top. When the bar drops to half the boss
-gets **angry**: it turns red, moves faster and attacks more.
+Every boss has a green bar at the top. When the bar drops to half the boss goes
+into **PHASE 2**. The bar glows red and says so.
+
+In phase 2 the boss:
+
+- turns red and moves faster
+- attacks more often
+- fires a **ring of 8 shots** all around itself, again and again
+
+Keep moving in phase 2. Standing still is how you lose.
 
 | Boss | Hits | What it does |
 | --- | --- | --- |
@@ -235,7 +305,8 @@ gets **angry**: it turns red, moves faster and attacks more.
 
 Jump on a boss head, or hit it with your weapon.
 
-Every boss arena has hearts and a power up. Use them.
+Every boss arena has hearts and a weapon. There is **no star** on a boss level,
+so you have to fight it properly.
 
 ## Make your own levels
 
@@ -304,6 +375,13 @@ Weapon boxes:
 | `4` | Laser |
 | `5` | Boomerang |
 | `6` | Bombs |
+| `7` | Ice Gun. A **bonus** box, not the level's weapon. It only shows up in the game once you buy the Ice Gun in the shop |
+
+Every level must have at least one box from `1` to `6`, because those are free.
+A `7` box is always extra on top of that, so a player who has not bought the
+Ice Gun is never left with no weapon. Boss levels never get a `7`, because a
+boss cannot be frozen. Both `tools/genlevels.cjs` and `tools/checklevels.cjs`
+enforce all three of these rules.
 
 Enemies:
 
@@ -335,9 +413,14 @@ Bosses:
 | `Q` | Mummy Lord |
 | `D` | Fire Dragon |
 | `X` | Shadow Master |
-| `7` | Storm Bird |
+| `b` | Storm Bird |
 | `8` | Crystal Queen |
 | `9` | Iron Titan |
+
+Careful: every letter must be used **once** in the whole game. `7` is the Ice
+Gun, so the Storm Bird uses `b`. `I` is the Imp, so the Ice Gun could not use
+`I`. Before you add a new letter, check it is not already an enemy, a boss, a
+power up, a weapon or a tile.
 
 ### Rules for a level that works
 
@@ -357,6 +440,8 @@ Bosses:
     back off it.
 12. Do not put an enemy on a ledge narrower than 5 tiles, and keep every
     enemy at least 2 tiles away from spikes and lava.
+13. Every weapon box must sit on solid ground, and the robot must be able to
+    reach it.
 
 `node tools\genlevels.cjs` builds `levels.js` and checks all of these.
 `node tools\checklevels.cjs` checks them again on its own. Never edit
@@ -372,11 +457,30 @@ NINJA.goTo(3, 2)           // world 4, level 3
 NINJA.unlockAll()          // open every level
 NINJA.wipeSave()           // forget everything and start again
 NINJA.giveWeapon('rocket') // hand yourself a weapon
+NINJA.giveWeapon('ice')    // the ice gun
 NINJA.game.score = 100
 NINJA.player.starT = 600   // star power for 10 seconds
 NINJA.hint                 // the maze arrow state
 NINJA.hintTrail()          // the tiles the arrows point along
+
+NINJA.giveCoins(500)       // money for the shop
+NINJA.coinsLeft()          // money you can spend
+NINJA.gemsLeft()           // gems you can spend
+NINJA.buy('heart')         // buy a shop thing. ids: heart wind lucky ice radar gold
+NINJA.owns('ice')          // how many you have bought
+NINJA.openShop()           // go to the shop screen
+NINJA.freeze(0, 330)       // freeze enemy number 0
+NINJA.medalsOf(0)          // the 3 medal bits for level 1
+NINJA.totalMedals()        // medals out of 144
+NINJA.boss.hp = 5          // hurt the boss to see PHASE 2
+NINJA.cam                  // where the camera is
+NINJA.menuHits             // every tap box on the menu you are looking at
+NINJA.menu                 // menu.wsel is the cursor on the world screen
 ```
+
+To see the game loop run at full speed in a headless browser you must replace
+`requestAnimationFrame` with `setTimeout`. A headless browser only draws about
+2 frames a second, so every timing test is wrong without it.
 
 ## Run it on your own computer
 
@@ -406,8 +510,9 @@ Then open http://localhost:8000 in a browser.
 **V1** was 5 worlds, 25 levels, ninja stars only. It is kept at `v1/` and it
 still works. It has its own saved progress, so playing V1 does not touch V2.
 
-**V2** is this game: 8 worlds, 48 levels, 16 enemies, 8 bosses, 7 weapons,
-wall jumps, ladders, mazes, keys, doors, hidden gems and secret rooms.
+**V2** is this game: 8 worlds, 48 levels, 16 enemies, 8 bosses, 8 weapons,
+wall jumps, ladders, mazes, keys, doors, hidden gems and secret rooms. It also
+has a shop, medals and boss phase two.
 
 ### V2 updates
 
@@ -420,3 +525,33 @@ wall jumps, ladders, mazes, keys, doors, hidden gems and secret rooms.
 - **Maze levels are fairer**: wider ledges, shorter drops, no enemy on a tiny
   ledge, no enemy next to spikes or lava.
 - **No star on a boss level.** You get rapid fire instead.
+
+### V3 updates
+
+- **Coins are money now.** Finish a level and its coins go in your bank. Die
+  and you lose that run's coins. Play the level again to get them again.
+- **A shop.** From PICK A WORLD, go to **SHOP**. Six things to buy with coins
+  and gems: Heart Up, Second Wind, Lucky Start, Ice Gun, Gem Radar and
+  Gold Ninja.
+- **Gems are money too**, but the game still remembers you found them. Your
+  gem count never goes down.
+- **Medals.** 3 per level, 144 in the game: NO HIT, ALL GEMS, ALL COINS. You
+  see them as dots on the level screen.
+- **Boss PHASE 2.** At half health a boss now fires a ring of 8 shots all
+  around itself, again and again, on top of everything else it does.
+- **The Ice Gun.** A new weapon you buy with gems. It freezes an enemy into a
+  block of ice you can stand on. Bosses cannot be frozen.
+- **Fixed: hit dots never showed.** Every enemy takes more than one hit, but
+  the little dots that show how many hits are left were drawing at a broken
+  position, so you never saw them. Now you do.
+- **Fixed: the Storm Bird had no letter.** The Ice Gun took `7`, which was
+  already the Storm Bird. The Storm Bird now uses `b`.
+- **Fixed: 7 levels had no weapon.** Adding the Ice Gun to the level maker made
+  it replace the normal weapon box in 7 levels, and Level 1 was one of them. A
+  new player would have found no weapon at all. Ice boxes are now a **bonus**
+  on top of the normal box, never instead of it, and never on a boss level.
+- **Fixed: you could not stomp a small slime.** The two small slimes a big
+  slime splits into were missing one setting, so the new ice code treated them
+  as blocks of ice. You stood on thin air and could not squash them.
+- **Fixed: the shop needed a finger.** The SHOP button could only be tapped.
+  Now the arrow keys move onto it and SPACE opens it.

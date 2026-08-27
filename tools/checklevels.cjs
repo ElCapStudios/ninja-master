@@ -39,10 +39,15 @@ const ENEMIES = [
   ['Z', 'S'], ['W', 'V'], ['U', 'C'], ['I', 'G'],
   ['N', 'Y'], ['A', 'E'], ['L', 'O'], ['f', 'j']
 ];
-const BOSSES = ['K', 'J', 'Q', 'D', 'X', '7', '8', '9'];
+/* The Sky Temple boss used to be '7'. That digit is now the ice gun box, so
+   the Storm Bird moved to 'b'. */
+const BOSSES = ['K', 'J', 'Q', 'D', 'X', 'b', '8', '9'];
 const ALL_ENEMY_CH = 'ZSWVUCIGNYAELOfj';
-const ALL_BOSS_CH = 'KJQDX789';
-const LEGAL = '.#=^~T%+|/PFoHM*BRkg123456' + ALL_ENEMY_CH + ALL_BOSS_CH;
+const ALL_BOSS_CH = 'KJQDXb89';
+/* Weapon boxes. '7' is the ice gun. */
+const CORE_WEAPON_CH = '123456';
+const ALL_WEAPON_CH = '1234567';
+const LEGAL = '.#=^~T%+|/PFoHM*BRkg' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 const LAVA_WORLDS = [3, 6];
 
 // ---------------------------------------------------------------------------
@@ -349,7 +354,7 @@ function countFeatures(rows) {
     if (top !== null && lastTop !== null && top !== lastTop) n++;
     if (top !== null) lastTop = top;
   }
-  n += findAll(toGrid(rows), ALL_ENEMY_CH + ALL_BOSS_CH + 'THM*BRkg123456+').length;
+  n += findAll(toGrid(rows), ALL_ENEMY_CH + ALL_BOSS_CH + 'THM*BRkg' + ALL_WEAPON_CH + '+').length;
   return n;
 }
 
@@ -505,8 +510,14 @@ function checkOne(level, index) {
     });
   } else if (stars.length > 1) say('a maze wants at most one star');
 
-  const weapons = findAll(grid, '123456');
+  /* The level's real weapon must be one you already own. Ice boxes ('7') are a
+     bonus you can only use after buying the ice gun, so they never count as
+     the level's weapon. */
+  const weapons = findAll(grid, CORE_WEAPON_CH);
   if (weapons.length < 1 || weapons.length > 2) say('wants 1 or 2 weapons, found ' + weapons.length);
+  const iceBoxes = findAll(grid, '7');
+  if (iceBoxes.length > 2) say('wants at most 2 ice boxes, found ' + iceBoxes.length);
+  if (boss && iceBoxes.length) say('a boss level must have no ice box, a boss cannot be frozen');
   if (kind === 'run') {
     weapons.forEach(function (wp) {
       if (wp.x > W * 0.68) say('weapon at ' + wp.x + ' is past the first two thirds');
@@ -568,6 +579,17 @@ function checkOne(level, index) {
     if (!solve.ok) return;
     if (!solve.reachable(g.x, g.y)) say('gem at ' + g.x + ',' + g.y + ' cannot be reached');
     else if (!solve.detour(g.x, g.y)) say('gem at ' + g.x + ',' + g.y + ' sits on the main path');
+  });
+
+  /* A weapon box you cannot stand on is a box you cannot pick up. */
+  weapons.concat(iceBoxes).forEach(function (wp) {
+    const under = wp.y + 1 < H ? rows[wp.y + 1][wp.x] : '#';
+    if (SOLID_SET.indexOf(under) < 0 && rows[wp.y][wp.x] !== '|') {
+      say('weapon "' + wp.ch + '" at ' + wp.x + ',' + wp.y + ' stands on nothing');
+    }
+    if (solve.ok && !solve.reachable(wp.x, wp.y)) {
+      say('weapon "' + wp.ch + '" at ' + wp.x + ',' + wp.y + ' cannot be reached');
+    }
   });
 
   const traps = solve.traps();
