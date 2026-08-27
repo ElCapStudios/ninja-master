@@ -573,7 +573,9 @@ function checkLevel(level) {
   });
 
   const stars = findAll(grid, '*');
-  if (kind === 'run') {
+  if (boss) {
+    if (stars.length) say('a boss level must have no star, found ' + stars.length);
+  } else if (kind === 'run') {
     if (stars.length !== 1) say('a run level wants one star, found ' + stars.length);
     stars.forEach(function (st) {
       const part = st.x / W;
@@ -1040,12 +1042,15 @@ function buildBoss(world, index, inWorld, seed) {
   if (foeSpots.length < 2) return null;
   foeSpots.forEach(function (s, i) { grid[s.y][s.x] = ENEMIES[world][i % 2]; });
 
+  // A boss level gets rapid fire, never a star. A star makes you invincible,
+  // so you can just walk into the boss and win. Rapid fire helps the fight
+  // but you still have to keep out of the way.
   const lo = Math.ceil(W * 0.38), hi = Math.floor(W * 0.52);
-  const starSpots = restSpots(grid, solve, lo, Math.min(hi, head[0].length - 2))
+  const giftSpots = restSpots(grid, solve, lo, Math.min(hi, head[0].length - 2))
     .filter(function (s) { return !used(grid, s); });
-  if (!starSpots.length) return null;
-  const st = starSpots[Math.floor(rng() * starSpots.length) % starSpots.length];
-  grid[st.y][st.x] = '*';
+  if (!giftSpots.length) return null;
+  const gt = giftSpots[Math.floor(rng() * giftSpots.length) % giftSpots.length];
+  grid[gt.y][gt.x] = 'R';
 
   const wpSpots = spread(rng, restSpots(grid, solve, 14, Math.floor(W * 0.6))
     .filter(function (s) { return !used(grid, s); }), 1, 10);
@@ -1303,46 +1308,74 @@ function buildMaze(world, index, inWorld, seed, roomRows) {
   if (!fakeWall) return null;
 
   // a little furniture so the rooms are not empty boxes
+  //
+  // Every landing pad is at least four tiles wide and at most one jump above
+  // the thing you jump from, and no hazard ever sits under a platform, so you
+  // can never drop on to spikes you could not see.
+  function platAbove(x, y) {
+    for (let k = 1; k <= 9; k++) {
+      const yy = y - k;
+      if (yy < 0) break;
+      const c = grid[yy][x];
+      if (c === '=' || c === '/' || c === '#') return true;
+    }
+    return false;
+  }
+  function floorClear(x0, x1, y) {
+    for (let x = x0; x <= x1; x++) if (platAbove(x, y)) return false;
+    return true;
+  }
+
   Object.keys(rooms).forEach(function (rk) {
     const b = rooms[rk];
     const tries = irnd(rng, 3, 5);
     for (let t = 0; t < tries; t++) {
       const kind = rng();
       if (kind < 0.34) {
-        // a stack of shelves you can climb, one jump at a time
+        // two wide shelves, nearly on top of each other, one jump apart.
+        // The span is one column wider than the shelves on each side, so
+        // there is always a way to step off and drop back down.
         if (b.sr - 8 < b.y0) continue;
         const x = findSpan(rk, 7, rng);
         if (x < 0) continue;
-        for (let k = 1; k <= 3; k++) grid[b.sr - 3][x + k] = '=';
-        for (let k = 4; k <= 6; k++) grid[b.sr - 6][x + k] = '=';
-        grid[b.sr - 4][x + 2] = 'o';
-        grid[b.sr - 7][x + 5] = 'o';
+        for (let k = 1; k <= 4; k++) grid[b.sr - 3][x + k] = '=';
+        for (let k = 2; k <= 5; k++) grid[b.sr - 6][x + k] = '=';
+        grid[b.sr - 4][x + 1] = 'o';
+        grid[b.sr - 7][x + 4] = 'o';
         claim(rk, x, x + 6);
       } else if (kind < 0.5) {
-        const x = findSpan(rk, 4, rng);
+        // one wide ledge, never more than one jump off the floor
+        const x = findSpan(rk, 6, rng);
         if (x < 0) continue;
-        const y = b.sr - irnd(rng, 4, 8);
+        const y = b.sr - irnd(rng, 3, 4);
         if (y - 1 < b.y0) continue;
-        for (let k = 0; k < 3; k++) grid[y][x + k] = '=';
-        grid[y - 1][x + 1] = 'o';
-        claim(rk, x, x + 3);
+        for (let k = 1; k <= 4; k++) grid[y][x + k] = '=';
+        grid[y - 1][x + 2] = 'o';
+        claim(rk, x, x + 5);
       } else if (kind < 0.68) {
+        // spikes on the floor, two clear tiles either side and open sky above
         const n = irnd(rng, 1, 2);
-        const x = findSpan(rk, n + 2, rng);
+        const x = findSpan(rk, n + 4, rng);
         if (x < 0) continue;
-        for (let k = 0; k < n; k++) grid[b.sr][x + 1 + k] = '^';
-        claim(rk, x, x + n + 1);
+        if (!floorClear(x, x + n + 3, b.sr)) continue;
+        for (let k = 0; k < n; k++) grid[b.sr][x + 2 + k] = '^';
+        claim(rk, x, x + n + 3);
       } else if (kind < 0.88) {
-        const x = findSpan(rk, 3, rng);
+        // a cracked step on the floor and a wide cracked ledge over it
+        const x = findSpan(rk, 6, rng);
         if (x < 0) continue;
         grid[b.sr][x + 1] = '/';
-        grid[b.sr - 3][x + 1] = '/';
-        claim(rk, x, x + 2);
+        for (let k = 1; k <= 4; k++) grid[b.sr - 3][x + k] = '/';
+        claim(rk, x, x + 5);
       } else if (LAVA_WORLDS.indexOf(world) >= 0) {
-        const x = findSpan(rk, 3, rng);
+        // a lava pool wide enough to read from far off, two clear tiles
+        // either side, and nothing above it to drop you in
+        const n = 2;
+        const x = findSpan(rk, n + 4, rng);
         if (x < 0) continue;
-        grid[b.sr][x + 1] = '~';
-        claim(rk, x, x + 2);
+        if (!floorClear(x, x + n + 3, b.sr)) continue;
+        for (let k = 0; k < n; k++) grid[b.sr][x + 2 + k] = '~';
+        claim(rk, x, x + n + 3);
       }
     }
   });
@@ -1359,11 +1392,42 @@ function buildMaze(world, index, inWorld, seed, roomRows) {
   }
 
   // enemies, at most three to a room
+  //
+  // They stand on the room floor or on a wide ledge, never on a small landing
+  // pad, and never within two tiles of spikes or lava, so a knock back cannot
+  // throw you into a hazard.
+  function standWidth(x, y) {
+    const r = y + 1;
+    if (r >= H) return 0;
+    if (SOLID_SET.indexOf(grid[r][x]) < 0) return 0;
+    let a = x, z = x;
+    while (a - 1 >= 0 && SOLID_SET.indexOf(grid[r][a - 1]) >= 0) a--;
+    while (z + 1 < W && SOLID_SET.indexOf(grid[r][z + 1]) >= 0) z++;
+    return z - a + 1;
+  }
+  function nearHazard(x, y) {
+    for (let dy = 0; dy <= 1; dy++) {
+      const yy = y + dy;
+      if (yy >= H) break;
+      for (let dx = -2; dx <= 2; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= W) continue;
+        const c = grid[yy][xx];
+        if (c === '^' || c === '~') return true;
+      }
+    }
+    return false;
+  }
+  function foeOk(s) {
+    if (used(grid, s)) return false;
+    if (roomOf(s.x, s.y) === startRoom) return false;
+    if (nearHazard(s.x, s.y)) return false;
+    return standWidth(s.x, s.y) >= 5;
+  }
+
   const perRoom = {};
   const wantFoes = 12 + irnd(rng, 0, 6);
-  const foeSpots = spread(rng, restSpots(grid, solve, 1, W - 1).filter(function (s) {
-    return !used(grid, s) && roomOf(s.x, s.y) !== startRoom;
-  }), wantFoes + 8, 5);
+  const foeSpots = spread(rng, restSpots(grid, solve, 1, W - 1).filter(foeOk), wantFoes + 14, 5);
   let placed = 0;
   for (let i = 0; i < foeSpots.length && placed < wantFoes; i++) {
     const s = foeSpots[i];

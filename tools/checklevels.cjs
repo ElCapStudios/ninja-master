@@ -493,7 +493,9 @@ function checkOne(level, index) {
   });
 
   const stars = findAll(grid, '*');
-  if (kind === 'run') {
+  if (boss) {
+    if (stars.length) say('a boss level must have no star, found ' + stars.length);
+  } else if (kind === 'run') {
     if (stars.length !== 1) say('a run level wants one star, found ' + stars.length);
     stars.forEach(function (st) {
       const part = st.x / W;

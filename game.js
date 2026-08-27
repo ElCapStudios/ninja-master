@@ -157,6 +157,8 @@
   var backEdge = false;
   /* Escape (or the MENU button) only. Throw keys must never quit a level. */
   var escEdge = false;
+  /* H, to turn the maze arrows off and on. */
+  var hintEdge = false;
   var typedKey = '';
   var tapPoint = null;
 
@@ -181,6 +183,9 @@
     if (/^Key[A-Z]$/.test(e.code)) { typedKey = e.code.slice(3); }
     else if (e.code === 'Backspace') { typedKey = '<'; e.preventDefault(); }
     else if (e.code === 'Escape') { backEdge = true; escEdge = true; }
+
+    /* H turns the maze arrows off and on. */
+    if (e.code === 'KeyH' && game.mode === 'play') { hintEdge = true; }
 
     if (KEY_UP[e.code]) { input.up = true; }
     if (KEY_DOWN[e.code]) { input.down = true; navEdge = 1; e.preventDefault(); }
@@ -395,7 +400,7 @@
     'star':      { name: 'NINJA STAR', color: '#cfd8e8', dmg: 1, ammo: -1, cd: 16, rapidCd: 6, max: 3, life: 90, speed: 5.4 },
     'shotgun':   { name: 'SHOTGUN', color: '#d8a05a', dmg: 1, ammo: 14, cd: 26, max: 9, pellets: 3, life: 26, speed: 5.2 },
     'rocket':    { name: 'ROCKET', color: '#ff5a4a', dmg: 4, ammo: 6, cd: 44, max: 2, blast: 26, breaks: true, life: 130, speed: 2.9 },
-    'flame':     { name: 'FLAME', color: '#ff9a2a', dmg: 1, ammo: 70, cd: 4, max: 22, life: 15, speed: 3.4 },
+    'flame':     { name: 'FLAME', color: '#ff9a2a', dmg: 1, ammo: 50, cd: 6, max: 24, pierce: true, life: 30, speed: 4.8 },
     'laser':     { name: 'LASER', color: '#6ff0ff', dmg: 2, ammo: 16, cd: 18, max: 4, pierce: true, breaks: true, life: 70, speed: 8.2 },
     'boomerang': { name: 'BOOMERANG', color: '#ffd93d', dmg: 2, ammo: 12, cd: 30, max: 1, life: 120, speed: 5.0, returns: true },
     'bombs':     { name: 'BOMBS', color: '#c8c8d4', dmg: 3, ammo: 10, cd: 34, max: 3, blast: 30, breaks: true, life: 110, speed: 3.6, arc: true }
@@ -533,6 +538,176 @@
     }
   }
 
+  /* ---- maze hints --------------------------------------------------------
+     Maze levels are big and it is easy to get lost. We work out the way to
+     the next thing you need, the key first and then the flag, and we draw a
+     soft trail of arrows. The trail only shows the next few steps, so you
+     still have to do the jumping and the fighting yourself. */
+  var hint = { on: false, off: false, dist: null, need: '', dirty: false, t: 0 };
+  var HDX = [1, -1, 0, 0];
+  var HDY = [0, 0, 1, -1];
+
+  /* A tile the arrow trail is allowed to go through. Walls, spikes, lava,
+     a shut door and a secret wall all stop it. */
+  function hintOpen(ch, haveKey) {
+    if (ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '%') { return false; }
+    if (ch === '+' && !haveKey) { return false; }
+    if (ch === '^' || ch === '~') { return false; }
+    return true;
+  }
+
+  /* True when you could stand here. The trail likes floors and ladders
+     much more than open air, so it follows the ground you walk on. */
+  function hintFooting(x, y) {
+    if (level.grid[y][x] === '|') { return true; }
+    if (y + 1 >= level.h) { return false; }
+    return isSolid(level.grid[y + 1][x]);
+  }
+
+  function buildHint() {
+    hint.on = false;
+    hint.dist = null;
+    hint.need = '';
+    hint.dirty = false;
+    if (!level || level.kind !== 'maze' || !player) { return; }
+
+    var haveKey = player.hasKey > 0;
+    var gx = -1, gy = -1, i;
+
+    /* A locked door is on the way, so send them for the key first. */
+    if (!haveKey) {
+      for (i = 0; i < keys.length; i++) {
+        if (!keys[i].taken) {
+          gx = Math.floor(keys[i].x / TILE);
+          gy = Math.floor(keys[i].y / TILE);
+          hint.need = 'KEY';
+          break;
+        }
+      }
+    }
+    if (gx < 0 && flag) {
+      gx = flag.tx;
+      gy = flag.ty;
+      hint.need = 'FLAG';
+    }
+    if (gx < 0) { return; }
+
+    var W = level.w, H = level.h;
+    var dist = new Int32Array(W * H);
+    for (i = 0; i < dist.length; i++) { dist[i] = -1; }
+
+    var buckets = [];
+    function drop(idx, d) {
+      if (!buckets[d]) { buckets[d] = []; }
+      buckets[d].push(idx);
+    }
+
+    var g0 = gy * W + gx;
+    dist[g0] = 0;
+    drop(g0, 0);
+
+    for (var d = 0; d < buckets.length; d++) {
+      var bag = buckets[d];
+      if (!bag) { continue; }
+      for (var bi = 0; bi < bag.length; bi++) {
+        var idx = bag[bi];
+        if (dist[idx] !== d) { continue; }
+        var x = idx % W;
+        var y = (idx - x) / W;
+        for (var k = 0; k < 4; k++) {
+          var nx = x + HDX[k], ny = y + HDY[k];
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) { continue; }
+          if (!hintOpen(level.grid[ny][nx], haveKey)) { continue; }
+          var nd = d + (hintFooting(nx, ny) ? 1 : 4);
+          var ni = ny * W + nx;
+          if (dist[ni] >= 0 && dist[ni] <= nd) { continue; }
+          dist[ni] = nd;
+          drop(ni, nd);
+        }
+      }
+    }
+
+    hint.dist = dist;
+    hint.on = true;
+  }
+
+  /* Walk downhill from where you stand and hand back the next few steps. */
+  function hintTrail() {
+    var out = [];
+    if (!hint.on || !hint.dist) { return out; }
+    var W = level.w, H = level.h;
+    var x = clamp(Math.floor((player.x + player.w / 2) / TILE), 0, W - 1);
+    var y = clamp(Math.floor((player.y + player.h / 2) / TILE), 0, H - 1);
+    var k, ax, ay, dv;
+
+    /* If you are somewhere the map calls shut, such as inside a secret,
+       borrow the best open tile close by. */
+    if (hint.dist[y * W + x] < 0) {
+      var best = -1, bx = -1, by = -1;
+      for (var oy = -2; oy <= 2; oy++) {
+        for (var ox = -2; ox <= 2; ox++) {
+          ax = x + ox; ay = y + oy;
+          if (ax < 0 || ay < 0 || ax >= W || ay >= H) { continue; }
+          dv = hint.dist[ay * W + ax];
+          if (dv < 0) { continue; }
+          if (best < 0 || dv < best) { best = dv; bx = ax; by = ay; }
+        }
+      }
+      if (best < 0) { return out; }
+      x = bx; y = by;
+    }
+
+    for (var step = 0; step < 30; step++) {
+      var cur = hint.dist[y * W + x];
+      if (cur <= 0) { break; }
+      var nx = -1, ny = -1, low = cur;
+      for (k = 0; k < 4; k++) {
+        ax = x + HDX[k]; ay = y + HDY[k];
+        if (ax < 0 || ay < 0 || ax >= W || ay >= H) { continue; }
+        dv = hint.dist[ay * W + ax];
+        if (dv < 0 || dv >= low) { continue; }
+        low = dv; nx = ax; ny = ay;
+      }
+      if (nx < 0) { break; }
+      out.push({ x: x, y: y, dx: nx - x, dy: ny - y });
+      x = nx; y = ny;
+    }
+    return out;
+  }
+
+  /* Little gold arrows floating along the way. They fade out the further
+     ahead they are, so you only ever see the next bit of the route. */
+  function drawHint() {
+    if (!hint.on || hint.off) { return; }
+    var trail = hintTrail();
+    if (!trail.length) { return; }
+    hint.t++;
+    var gold = hint.need === 'KEY' ? '#ffd93d' : '#7ef0b0';
+    var last = Math.min(trail.length, 15);
+    for (var i = 1; i < last; i += 2) {
+      var a = trail[i];
+      var px = a.x * TILE + 8, py = a.y * TILE + 8;
+      if (px - cam.x < -20 || px - cam.x > VIEW_W + 20) { continue; }
+      if (py - cam.y < -20 || py - cam.y > VIEW_H + 20) { continue; }
+      var fade = 0.95 - (i / 15) * 0.55;
+      var bob = Math.sin((hint.t + i * 7) * 0.09) * 1.8;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.18, fade);
+      ctx.translate(px, py + bob);
+      ctx.rotate(Math.atan2(a.dy, a.dx));
+      ctx.fillStyle = '#05060d';
+      ctx.beginPath();
+      ctx.moveTo(9, 0); ctx.lineTo(-5, -7); ctx.lineTo(-2, 0); ctx.lineTo(-5, 7);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = gold;
+      ctx.beginPath();
+      ctx.moveTo(6.8, 0); ctx.lineTo(-3.6, -5); ctx.lineTo(-1.2, 0); ctx.lineTo(-3.6, 5);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function loadLevel(index) {
     var def = LEVELS[index];
     var rows = def.rows;
@@ -597,7 +772,11 @@
           weaponBoxes.push({ kind: WEAPON_CHARS[ch], x: c * TILE + 1, y: r * TILE + 2, w: 14, h: 13, taken: false, t: (c * 6 + r * 8) % 60 });
           level.grid[r][c] = '.';
         } else if (POWERUPS[ch]) {
-          powerups.push({ kind: ch, x: c * TILE + 2, y: r * TILE + 2, w: 12, h: 12, taken: false, t: (c * 7 + r * 11) % 60 });
+          /* No star on a boss level. With a star you just run at the boss
+             and win, and that is no fun. */
+          if (!(ch === '*' && level.boss)) {
+            powerups.push({ kind: ch, x: c * TILE + 2, y: r * TILE + 2, w: 12, h: 12, taken: false, t: (c * 7 + r * 11) % 60 });
+          }
           level.grid[r][c] = '.';
         } else if (ENEMY_TYPES[ch]) {
           enemies.push(makeEnemy(ch, c, r));
@@ -607,7 +786,7 @@
           enemies.push(boss);
           level.grid[r][c] = '.';
         } else if (ch === 'F') {
-          flag = { x: c * TILE + 3, y: r * TILE - 32, w: 11, h: 48 };
+          flag = { x: c * TILE + 3, y: r * TILE - 32, w: 11, h: 48, tx: c, ty: r };
           level.grid[r][c] = '.';
         }
       }
@@ -615,6 +794,7 @@
 
     buildBackdrop(index + 1);
     resetPlayer();
+    buildHint();
     cam.x = clamp(player.x + player.w / 2 - VIEW_W / 2, 0, Math.max(0, level.pxW - VIEW_W));
     cam.y = clamp(player.y + player.h / 2 - VIEW_H / 2, 0, Math.max(0, level.pxH - VIEW_H));
   }
@@ -868,8 +1048,10 @@
       game.shake = 4;
       Sound.star();
     } else if (wk === 'flame') {
-      var spread = (Math.random() - 0.5) * 1.5;
-      shurikens.push(makeShot(wk, fx, fy, p.facing * W.speed, spread));
+      /* Fire comes out a bit higher than the other weapons, and it only
+         spreads a little, so a shot on the ground does not hit the floor. */
+      var spread = (Math.random() - 0.5) * 0.7;
+      shurikens.push(makeShot(wk, fx, p.y + 2, p.facing * W.speed, spread));
       Sound.star();
     } else if (wk === 'bombs') {
       var b = makeShot(wk, fx, fy - 2, p.facing * W.speed, -3.4);
@@ -900,7 +1082,7 @@
 
   function makeShot(wk, x, y, vx, vy) {
     var W = WEAPONS[wk];
-    var size = wk === 'rocket' ? 8 : (wk === 'bombs' ? 7 : (wk === 'laser' ? 10 : 6));
+    var size = wk === 'rocket' ? 8 : (wk === 'bombs' ? 7 : (wk === 'laser' ? 10 : (wk === 'flame' ? 9 : 6)));
     return {
       wk: wk, x: x, y: y, w: size, h: wk === 'laser' ? 4 : size,
       vx: vx, vy: vy || 0, rot: 0,
@@ -1135,6 +1317,7 @@
     navEdge = 0;
     backEdge = false;
     escEdge = false;
+    hintEdge = false;
     typedKey = '';
     tapPoint = null;
   }
@@ -1224,6 +1407,12 @@
       return;
     }
 
+    /* Press H to turn the maze arrows off and on. */
+    if (hintEdge && level.kind === 'maze') {
+      hint.off = !hint.off;
+      toast(hint.off ? 'ARROWS OFF' : 'ARROWS ON', '#7ef0b0');
+    }
+
     updatePlayer();
     updateEnemies();
     updateShurikens();
@@ -1232,6 +1421,7 @@
     updateCoins();
     updatePowerups();
     updateKeysGemsWeapons();
+    if (hint.dirty) { buildHint(); }
     updateParticles();
     updateToasts();
 
@@ -1700,6 +1890,7 @@
           burst(cx * TILE + 8, d * TILE + 8, '#ffd93d', 5, 2);
         }
         p.hasKey--;
+        hint.dirty = true;
         toast('DOOR OPEN', '#ffd93d');
         Sound.power();
         game.shake = 4;
@@ -2303,6 +2494,8 @@
       /* A boomerang flies out, stops, then comes back to you. */
       if (s.home) {
         s.turn--;
+        /* Once it turns round it is a fresh pass, so it can hit again. */
+        if (s.turn === 0) { s.hitList = null; }
         if (s.turn <= 0) {
           var tx = player.x + 5, ty = player.y + 7;
           var dx = tx - s.x, dy = ty - s.y;
@@ -2313,8 +2506,8 @@
           if (d < 10) { shurikens.splice(i, 1); continue; }
         }
       }
-      /* Flame slows down and fades. */
-      if (s.wk === 'flame') { s.vx *= 0.955; s.vy *= 0.955; }
+      /* Flame slows down as it flies, and it floats up a little like real fire. */
+      if (s.wk === 'flame') { s.vx *= 0.975; s.vy = s.vy * 0.975 - 0.02; }
 
       s.x += s.vx;
       s.y += s.vy;
@@ -2353,8 +2546,9 @@
       for (var j = 0; j < enemies.length; j++) {
         var e = enemies[j];
         if (!e.alive || e.ghostT > 0 || !overlap(s, e)) { continue; }
-        /* A laser goes through, but it only hurts each one once. */
-        if (s.pierce) {
+        /* A laser or flame goes through. A boomerang comes back. Either way
+           it only hurts the same enemy once on each pass. */
+        if (s.pierce || s.home) {
           if (!s.hitList) { s.hitList = []; }
           if (s.hitList.indexOf(e) >= 0) { continue; }
           s.hitList.push(e);
@@ -2362,6 +2556,7 @@
         if (shieldBlocks(e, s.x + s.w / 2)) {
           burst(s.x + s.w / 2, s.y + s.h / 2, '#cfe6ff', 5, 2);
           Sound.bonk();
+          if (s.home) { if (s.turn > 4) { s.turn = 4; } continue; }
           if (!s.pierce) { died = true; break; }
           continue;
         }
@@ -2402,6 +2597,7 @@
       if (overlap(it, player) && !player.dying) {
         it.taken = true;
         player.hasKey++;
+        hint.dirty = true;
         toast('KEY', '#ffd93d');
         Sound.power();
         game.score += 5;
@@ -2877,8 +3073,10 @@
         ctx.fillRect(-4, -4, 2, 2);
         ctx.fillRect(-4, 2, 2, 2);
       } else if (s.wk === 'flame') {
-        var f = clamp(s.life / 15, 0.2, 1);
-        ctx.globalAlpha = f;
+        /* Fire grows into a big ball as it flies, then fades away. */
+        var age = clamp(1 - s.life / WEAPONS.flame.life, 0, 1);
+        var f = 0.55 + age * 1.35;
+        ctx.globalAlpha = 1 - age * 0.72;
         ctx.fillStyle = '#ff5a1a';
         ctx.beginPath(); ctx.arc(0, 0, 5 * f + 2, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#ffa42a';
@@ -5350,6 +5548,7 @@
     ctx.translate(-Math.round(cam.x) + sx, -Math.round(cam.y) + sy);
 
     drawTiles();
+    drawHint();
     drawFlag();
     drawCoins();
     drawPowerups();
@@ -5441,6 +5640,9 @@
     get keys() { return keys; },
     get gems() { return gems; },
     get weaponBoxes() { return weaponBoxes; },
+    get hint() { return hint; },
+    get shurikens() { return shurikens; },
+    hintTrail: hintTrail,
     worlds: WORLDS,
     weapons: WEAPONS,
     perWorld: LEVELS_PER_WORLD,

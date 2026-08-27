@@ -23,6 +23,7 @@ The last level in each world is a **boss fight**.
 | Enter | In a menu it picks the thing. In a level it fires your weapon |
 | X, J, K or Shift | Fire your weapon. In a menu it goes back |
 | Escape | Go back. In a level it takes you to the level select |
+| H | On a maze level, turn the green arrows off and on |
 
 ### Touch screen
 
@@ -77,9 +78,9 @@ what you find and you use it.
 | Ninja Star | 1 | never runs out | Your normal weapon |
 | Shotgun | 1 | 14 | Fires 3 pellets in a spread. Very strong close up |
 | Rocket | 4 | 6 | Big blast. Smashes cracked blocks |
-| Flame | 1 | 70 | A fast stream of short flames |
+| Flame | 1 | 60 | A fast stream of fire. It burns **through** a whole line of enemies. Short range, about 6 tiles |
 | Laser | 2 | 16 | Goes straight through enemies. Smashes cracked blocks |
-| Boomerang | 2 | 12 | Flies out and comes back. It can hit twice |
+| Boomerang | 2 | 12 | Flies out and comes back. It hits twice, once each way |
 | Bombs | 3 | 10 | Falls in an arc. Big blast. Smashes cracked blocks |
 
 The weapon you hold is shown at the top left, with the ammo left.
@@ -165,6 +166,28 @@ is meant to happen. It is not a bug.
 Wall jumping is the way out of most deep shafts. Jump at one wall, then the
 other, then back again.
 
+Every jump in a maze is a jump you can make. The ledges are at least 4 tiles
+wide, they are never more than 4 rows above the floor, and there is always a
+free space at each side so you can get back off. No enemy stands on a tiny
+ledge, and no enemy stands next to spikes or lava.
+
+### The arrows show you the way
+
+Maze levels are big, so the game helps you. Small arrows float in the air and
+point the way you need to go.
+
+- **Yellow arrows** point at the **key**. Get the key first.
+- **Green arrows** point at the **flag**. That is the finish.
+
+You only see the next few arrows, not the whole way. So you still have to do
+the jumping and the fighting yourself. The arrows never point into spikes,
+lava or a wall, and they never show you a secret room.
+
+Press **H** to turn the arrows off if you want a harder game.
+
+The arrows only appear on maze levels. Run levels and boss levels do not have
+them, because you cannot get lost there.
+
 ## Power ups
 
 Power ups are in boxes. Walk into a box to take it.
@@ -181,6 +204,10 @@ Star power does **not** save you from spikes, lava or holes. Only from enemies.
 
 The star is the strongest power up, so it sits in the **middle** of a level.
 Not at the start, and not next to the flag where it would be no use.
+
+**There is no star on a boss level.** With a star you could just run at the
+boss and win, and that is no fun. On a boss level you get **Rapid Stars**
+instead. It helps you, but you still have to dodge.
 
 The small bars at the top right show how much time is left on each power up.
 
@@ -321,9 +348,19 @@ Bosses:
 5. Do not put a platform right above spikes or an enemy.
 6. Do not put a platform above lava or a hole.
 7. A spring needs 7 empty rows above it.
-8. A star `*` goes between 35% and 65% of the way along the level.
+8. A star `*` goes between 35% and 65% of the way along the level. A **boss
+   level never has a star**. It gets a rapid fire `R` instead.
 9. A locked door `+` needs its key `k` on the side you start from.
 10. Every level needs exactly 3 gems `g`.
+11. On a maze level, keep a ledge at least 4 tiles wide, keep the drop to it
+    4 rows or less, and leave a free column each side so you can always get
+    back off it.
+12. Do not put an enemy on a ledge narrower than 5 tiles, and keep every
+    enemy at least 2 tiles away from spikes and lava.
+
+`node tools\genlevels.cjs` builds `levels.js` and checks all of these.
+`node tools\checklevels.cjs` checks them again on its own. Never edit
+`levels.js` by hand.
 
 ## Handy tricks for testing
 
@@ -337,6 +374,8 @@ NINJA.wipeSave()           // forget everything and start again
 NINJA.giveWeapon('rocket') // hand yourself a weapon
 NINJA.game.score = 100
 NINJA.player.starT = 600   // star power for 10 seconds
+NINJA.hint                 // the maze arrow state
+NINJA.hintTrail()          // the tiles the arrows point along
 ```
 
 ## Run it on your own computer
@@ -369,3 +408,15 @@ still works. It has its own saved progress, so playing V1 does not touch V2.
 
 **V2** is this game: 8 worlds, 48 levels, 16 enemies, 8 bosses, 7 weapons,
 wall jumps, ladders, mazes, keys, doors, hidden gems and secret rooms.
+
+### V2 updates
+
+- The **flame** now burns through a whole line of enemies and reaches about
+  6 tiles, so you do not have to stand on top of an enemy to use it.
+- The **boomerang** hits twice per throw, once each way. Before, it hurt an
+  enemy every single frame while it touched them, which made bosses too easy.
+- **Maze levels have arrows** that point at the key, then the flag. Press
+  **H** to hide them.
+- **Maze levels are fairer**: wider ledges, shorter drops, no enemy on a tiny
+  ledge, no enemy next to spikes or lava.
+- **No star on a boss level.** You get rapid fire instead.
