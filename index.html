@@ -13,6 +13,14 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0d1a'/><rect x='4' y='3' width='8' height='4' fill='%23d63a3a'/><rect x='4' y='7' width='8' height='6' fill='%23222436'/><rect x='5' y='8' width='2' height='2' fill='%23ffffff'/><rect x='9' y='8' width='2' height='2' fill='%23ffffff'/></svg>">
 </head>
 <body>
+<!--
+THESIS: Explore one linked pixel-art world, then cut a route through its levels.
+OWN-WORLD: Keep the ninja sprites, world palettes, dark sea and gold trail marks.
+STORY: Pick a region, follow its six stops, find gems and face its boss.
+FIRST VIEWPORT: The map fills the game canvas. Selected region details and
+the entry action sit below it; the touch pad appears only during play.
+FORM: Extend the existing game with the requested region map and level trail.
+-->
 
 <div id="stage">
   <canvas id="game" width="384" height="272"></canvas>
@@ -24,6 +32,7 @@
       <button class="btn" id="btn-right" aria-label="Move right">&#9654;</button>
     </div>
     <div class="pad-side pad-right">
+      <button class="btn btn-dig" id="btn-dig" aria-label="Dig terrain. Hold down to dig below, or jump to dig above">DIG</button>
       <button class="btn btn-throw" id="btn-throw" aria-label="Throw star">STAR</button>
       <button class="btn btn-jump"  id="btn-jump"  aria-label="Jump">JUMP</button>
     </div>
@@ -31,13 +40,15 @@
 
   <div id="topbar">
     <a class="tiny" href="v1/" aria-label="Play the old version">OLD GAME V1</a>
-    <button class="tiny" id="btn-menu" aria-label="Back to level select">MENU</button>
+    <button class="tiny" id="btn-pause" aria-label="Pause game" aria-pressed="false" hidden>PAUSE</button>
+    <button class="tiny" id="btn-menu" aria-label="Open game menu">MENU</button>
     <button class="tiny" id="btn-sound" aria-label="Toggle sound">SOUND ON</button>
     <button class="tiny" id="btn-full" aria-label="Toggle full screen">FULL SCREEN</button>
   </div>
 </div>
 
 <script src="levels.js"></script>
+<script src="terrain.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

@@ -2,9 +2,9 @@
 
 A platform game you can play in any web browser: phone, tablet, laptop.
 
-**Play it here:** https://erinels.github.io/ninja-master/
+**Play it here:** https://elcapstudios.github.io/ninja-master/
 
-The first version of the game is still there: https://erinels.github.io/ninja-master/v1/
+The first version of the game is still there: https://elcapstudios.github.io/ninja-master/v1/
 
 ## How to play
 
@@ -22,7 +22,8 @@ The last level in each world is a **boss fight**.
 | Down arrow, or S | Climb down a ladder. In a menu it moves down |
 | Enter | In a menu it picks the thing. In a level it fires your weapon |
 | X, J, K or Shift | Fire your weapon. In a menu it goes back |
-| Escape | Go back. In a level it takes you to the level select |
+| P or Escape | Pause or resume a level. Escape goes back in menus |
+| C | Hold to dig. Hold Up or Down to aim above or below |
 | H | On a maze level, turn the green arrows off and on |
 
 ### Touch screen
@@ -31,15 +32,44 @@ Big round buttons appear on the screen.
 
 - Left side: **left**, **down** (the small blue one), **right**.
 - Right side: **STAR** to fire, **JUMP** to jump.
+- **DIG**, above STAR: hold to dig. Hold DOWN to dig below, or JUMP to dig above.
 
 Hold JUMP to jump higher. Hold JUMP on a ladder to climb up. Hold the small
 blue down button to climb down.
 
-In a menu you can just **tap the box you want**.
+On a map, tap a world or level dot to choose it. Tap it again, or use
+**EXPLORE** or **PLAY**, to enter it.
 
 While you play, tapping anywhere on the game makes you jump.
 
-Tap **MENU** at the top to leave a level and pick a different one.
+Tap **PAUSE** or **MENU** at the top to pause. You can resume, restart the
+level, or return to the map. The game also pauses when you leave its tab.
+It waits for you to resume, so switching apps cannot cost you a heart.
+
+## Dig your own route
+
+Hold **C** or **DIG** to cut through earth and cracked walls. Digging has no
+ammo cost. Most weapons chip earth too. Stars need two hits, while a laser
+cuts through in one. Rockets and bombs make round holes.
+
+Dark cracks mark earth you can dig. Small bright studs mark firm rock.
+Thin ledges, springs, ladders, doors, level edges and boss floors stay firm.
+In mazes, walls can open into nearby rooms, but the old ledges stay in place.
+In running levels, you can cut shallow trenches in open ground. Firm steps
+remain so you can jump back out. Low tunnels, hazards and hidden gems keep
+their footing. Restarting a level puts all of its terrain back.
+
+Ice and flame do not cut earth. Enemy shots do not change terrain.
+Dust, stone chips and a short break sound show each block you remove.
+
+## Stronger hits and clear warnings
+
+Big hits stop the action for a few frames. A boss defeat holds it a little
+longer. Pause still works during this stop.
+
+A yellow **!** appears above an enemy before it fires, jumps or dives.
+Boss shots, jumps, warps and rage attacks also have this short warning.
+Walking into an enemy still hurts, so keep some space.
 
 ## Moves
 
@@ -77,11 +107,11 @@ what you find and you use it.
 | --- | --- | --- | --- |
 | Ninja Star | 1 | never runs out | Your normal weapon |
 | Shotgun | 1 | 14 | Fires 3 pellets in a spread. Very strong close up |
-| Rocket | 4 | 6 | Big blast. Smashes cracked blocks |
+| Rocket | 4 | 6 | Big blast. Cuts a hole in earth and cracked blocks |
 | Flame | 1 | 60 | A fast stream of fire. It burns **through** a whole line of enemies. Short range, about 6 tiles |
-| Laser | 2 | 16 | Goes straight through enemies. Smashes cracked blocks |
+| Laser | 2 | 16 | Goes straight through enemies and soft earth |
 | Boomerang | 2 | 12 | Flies out and comes back. It hits twice, once each way |
-| Bombs | 3 | 10 | Falls in an arc. Big blast. Smashes cracked blocks |
+| Bombs | 3 | 10 | Falls in an arc. Cuts a hole in earth and cracked blocks |
 | Ice Gun | 1 | 14 | **Buy it in the shop.** Turns an enemy into a block of ice. Stand on the block to get up high |
 
 The weapon you hold is shown at the top left, with the ammo left.
@@ -105,7 +135,7 @@ gun boxes show up in 14 places across the game.
 Beat a level and the coins you picked up go into your **bank**. Now you can
 spend them.
 
-Go to **PICK A WORLD**, then **SHOP**.
+Go to **WORLD MAP**, then **SHOP**.
 
 | Thing | Cost | What it does |
 | --- | --- | --- |
@@ -163,7 +193,11 @@ many hits it has left.
 
 ## Picking a level
 
-From the title screen you go to **PICK A WORLD**. Then you pick a level.
+From the title screen you go to **WORLD MAP**. Eight regions sit along a
+linked sea route. Each has its own landmark, from woods and frozen peaks to
+temples and iron towers. Cleared regions turn green. Pick a world to see its
+six-stop trail. The ninja walks to the dot you choose. Each dot shows your
+medals, and the panel shows its gems. Boss lairs mark the end of each trail.
 
 - A level with a **lock** on it is not open yet.
 - Finish a level and the next one opens.
@@ -335,18 +369,31 @@ This reads `levels.js` back, checks the rules again, and plays every level with
 a robot that can run, jump, wall jump and climb. All 48 must pass. It also
 reports any spot you could fall into and not get out of.
 
+It also checks full excavation and three fixed partial blast patterns in
+every level. The flag, keys and gems must still be in reach, with no trapped
+spots. `terrain.js` holds the same protection rules used by the game.
+
+Check the game controls, saves and combat too:
+
+```sh
+node tools/checkgame.cjs
+node tools/checklevels.cjs
+```
+
+These need only Node.js. There is no build step and no package to install.
+
 ### The letters in a level
 
 | Letter | Meaning |
 | --- | --- |
 | `.` | empty air |
-| `#` | solid ground |
+| `#` | ground. Earth can break; protected rock stays solid |
 | `%` | fake wall. Looks like rock. You walk through it |
 | `=` | thin platform |
 | `^` | spikes |
 | `~` | lava |
 | `\|` | ladder |
-| `/` | cracked block. Only a big weapon smashes it |
+| `/` | cracked block. Digging or a weapon can smash it unless it is protected |
 | `+` | locked door |
 | `k` | key |
 | `T` | spring |
@@ -500,6 +547,7 @@ Then open http://localhost:8000 in a browser.
 | `index.html` | The page, and the touch buttons |
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, weapons, bosses, menus, drawing |
+| `terrain.js` | Shared rules for earth, firm ledges and safe digging |
 | `levels.js` | The level maps. Made by the helper, do not edit |
 | `tools/genlevels.cjs` | Builds `levels.js` out of chunks and checks the rules |
 | `tools/checklevels.cjs` | Reads `levels.js` back and plays every level with a robot |
@@ -530,7 +578,7 @@ has a shop, medals and boss phase two.
 
 - **Coins are money now.** Finish a level and its coins go in your bank. Die
   and you lose that run's coins. Play the level again to get them again.
-- **A shop.** From PICK A WORLD, go to **SHOP**. Six things to buy with coins
+- **A shop.** From WORLD MAP, go to **SHOP**. Six things to buy with coins
   and gems: Heart Up, Second Wind, Lucky Start, Ice Gun, Gem Radar and
   Gold Ninja.
 - **Gems are money too**, but the game still remembers you found them. Your
