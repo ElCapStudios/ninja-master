@@ -975,7 +975,7 @@
       weapon: 'star', ammo: -1,
       hasKey: 0,
       onLadder: false, climbT: 0,
-      wallDir: 0, wallSlide: 0, wallLock: 0, wallKickT: 0, wallJumpDir: 0,
+      wallDir: 0, wallSlide: 0, wallLock: 0, wallKickT: 0,
       drawScaleX: 1, drawScaleY: 1
     };
     safeSpot.x = spawn.x;
@@ -1030,7 +1030,6 @@
     player.wallDir = 0;
     player.wallSlide = 0;
     player.wallLock = 0;
-    player.wallJumpDir = 0;
     player.drawScaleX = player.drawScaleY = 1;
     player.onLadder = false;
     bones = [];
@@ -2146,7 +2145,6 @@
       p.jumpsLeft = maxJumps();
       p.wallDir = 0;
       p.wallSlide = 0;
-      p.wallJumpDir = 0;
       if (throwEdge || input.throwHeld) { doThrow(); }
       p.x += p.vx;
       resolveX(p);
@@ -2184,7 +2182,7 @@
       p.wallDir = dir;
       if (p.vy > WALL_SLIDE_MAX) { p.vy = WALL_SLIDE_MAX; }
       p.wallSlide++;
-      if (p.wallJumpDir !== dir) { p.jumpsLeft = Math.max(p.jumpsLeft, 1); }
+      p.jumpsLeft = Math.max(p.jumpsLeft, 1);
       if (game.frame % 6 === 0) {
         burst(p.x + (dir > 0 ? p.w : 0), p.y + 12, '#cfd8e8', 1, 1.2);
       }
@@ -2192,7 +2190,7 @@
       p.wallSlide = 0;
     }
 
-    if (jumpBuffer > 0 && p.wallDir !== 0 && p.wallDir !== p.wallJumpDir && !p.onGround) {
+    if (jumpBuffer > 0 && p.wallDir !== 0 && !p.onGround) {
       jumpBuffer = 0;
       doWallJump(p.wallDir);
     } else if (jumpBuffer > 0 && (p.onGround || p.coyote > 0 || p.jumpsLeft > 0)) {
@@ -2222,7 +2220,6 @@
       p.onGround = false;
       p.coyote = 0;
       p.jumpsLeft = maxJumps();
-      p.wallJumpDir = 0;
       stretchNinja(p);
       springs[p.hitCx + ':' + p.hitCy] = 12;
       Sound.spring();
@@ -2236,7 +2233,7 @@
   /* Everything that happens once the ninja has moved. */
   function afterPlayerMove() {
     var p = player;
-    if (p.onGround) { p.coyote = 6; p.jumpsLeft = maxJumps(); p.wallJumpDir = 0; }
+    if (p.onGround) { p.coyote = 6; p.jumpsLeft = maxJumps(); }
     else if (p.coyote > 0) { p.coyote--; }
 
     revealSecrets(p);
@@ -2333,7 +2330,6 @@
     p.wallLock = 9;
     p.wallKickT = 12;
     p.wallSlide = 0;
-    p.wallJumpDir = wallDir;
     stretchNinja(p);
     p.jumpsLeft = Math.max(0, maxJumps() - 1);
     p.onGround = false;

@@ -87,9 +87,8 @@ pixel of the old height. Small head clips at a block corner can move you
 sideways by up to 4 pixels, so the jump keeps going.
 
 A wall kick works up to 3 pixels from the wall while you fall and hold
-towards it. Use the other wall for the next kick. The same wall cannot give
-you more kicks or refill your air jump until you land or use the other wall.
-This keeps shafts climbable without letting you climb one wall forever.
+towards it. As before, you can kick off the same wall again. Each wall
+slide refills one air jump. You can climb a lone wall or a shaft.
 
 The ninja stretches at take-off and squashes on landing. Hard landings
 squash more. This changes only the picture, not the hitbox.
@@ -404,10 +403,10 @@ To check the new movement and hints against the old game:
 GAME_SOURCE_REF=24481a3 node tools/checkgame.cjs
 ```
 
-The old 15 checks must pass. The new feature checks must fail on that old
-source. Both level solvers track the last wall used, so they do not count
-repeat kicks from one side. They keep their conservative jump ranges:
-held jumps gain less than one pixel of height.
+The old 15 checks and the wall-climb guards must pass on that old source.
+The new feature checks must fail. Both level solvers keep the old wall-jump
+model and conservative jump ranges: held jumps gain less than one pixel
+of height.
 
 ### The letters in a level
 

@@ -431,38 +431,29 @@ const tests = {
       assert.ok(p.vy > -2, 'still requires falling and holding towards the wall');
     }
   },
-  'one wall cannot refill air jumps or give repeated kicks, but opposite walls can': function () {
-    const g = arena(), p = g.n.player;
-    for (const row of g.n.level.grid) { row[6] = '#'; row[10] = '#'; }
-    p.x = 147; p.vy = 1; g.n.input.right = true;
-    g.jump();
-    assert.equal(p.wallJumpDir, 1, 'remember the wall used');
-    p.x = 147; p.vy = 1; p.vx = 0; p.wallLock = 0;
-    g.jump();
-    assert.equal(p.jumpsLeft, 0, 'only the remaining normal air jump is spent');
-    for (let i = 0; i < 12; i++) {
-      p.x = 147; p.vy = 1; p.vx = 0; p.wallLock = 0;
-      g.jump(i % 2 === 0);
-      assert.ok(p.vy > 0, 'same wall must not renew a jump');
-      assert.equal(p.jumpsLeft, 0);
+  'wall slides refill an air jump and same-wall kicks remain repeatable': function () {
+    for (const touch of [false, true]) {
+      for (const side of [-1, 1]) {
+        const g = arena(), p = g.n.player;
+        for (const row of g.n.level.grid) row[10] = '#';
+        g.n.input[side > 0 ? 'right' : 'left'] = true;
+        for (let i = 0; i < 4; i++) {
+          Object.assign(p, {
+            x: side > 0 ? 150 : 176, y: 400, vy: 1, vx: 0,
+            wallLock: 0, jumpsLeft: 0
+          });
+          g.t.updatePlayer();
+          assert.equal(p.jumpsLeft, 1, 'every wall slide refills one air jump');
+          g.jump(touch);
+          assert.ok(p.vy < -6, 'the same wall must allow another kick');
+          assert.equal(p.vx, -side * 3);
+          assert.equal(p.wallLock, 9);
+          assert.equal(p.jumpsLeft, 1, 'wall kicks keep the old spare air jump');
+        }
+      }
     }
-    p.x = 114; p.vy = 1; p.vx = 0; p.wallLock = 0;
-    g.n.input.right = false; g.n.input.left = true;
-    g.jump();
-    assert.ok(p.vy < -6); assert.equal(p.vx, 3, 'kick away from the opposite wall');
-    assert.equal(p.wallJumpDir, -1);
-    p.x = 147; p.vy = 1; p.vx = 0; p.wallLock = 0;
-    g.n.input.right = true; g.n.input.left = false;
-    g.jump(true);
-    assert.ok(p.vy < -6); assert.equal(p.vx, -3, 'shafts allow alternating kicks');
-    g.n.level.grid[26].fill('#');
-    p.y = 400; p.vy = 2; g.n.input.right = false;
-    g.t.updatePlayer();
-    assert.ok(p.onGround); assert.equal(p.wallJumpDir, 0, 'landing clears the wall lock');
-    g.t.respawn();
-    assert.equal(p.wallJumpDir, 0, 'respawn clears the wall lock');
   },
-  'a real shaft can be climbed while a lone wall cannot gain height forever': function () {
+  'lone walls and shafts remain climbable with the old wall-jump rules': function () {
     for (const shaft of [false, true]) {
       const g = arena(), p = g.n.player;
       for (const row of g.n.level.grid) {
@@ -471,26 +462,21 @@ const tests = {
       }
       p.x = 150; p.y = 600; p.vy = 1;
       let side = 1, kicks = 0, best = p.y;
-      for (let frame = 0; frame < 500 && p.y < 720 && p.y > 100; frame++) {
+      for (let frame = 0; frame < 1500 && p.y < 720 && p.y > 100; frame++) {
         g.n.input.right = side > 0; g.n.input.left = side < 0;
         g.n.input.jumpHeld = true;
-        const near = side > 0 ? p.x + p.w >= 157 : p.x <= 115;
-        if (near && p.vy > 0 && (p.wallJumpDir || 0) !== side) {
+        const near = side > 0 ? p.x + p.w >= 159 : p.x <= 113;
+        if (near && p.vy > 0) {
           g.win.fire('keydown', { code: 'Space' });
         }
         g.t.updatePlayer();
         if (p.wallLock === 9) { kicks++; side = shaft ? -side : 1; }
         best = Math.min(best, p.y);
       }
-      if (shaft) {
-        assert.ok(kicks >= 6 && best < 300, JSON.stringify({ shaft, kicks, best }));
-      } else {
-        assert.equal(kicks, 1, 'a lone wall gives one kick, not an endless climb');
-        assert.ok(best > 530, 'a lone kick cannot gain more than its normal rise');
-      }
+      assert.ok(kicks >= 6 && best < 300, JSON.stringify({ shaft, kicks, best }));
     }
   },
-  'both level solvers track wall sides across kicks, falls and landings': function () {
+  'both level solvers keep the old wall-kick and landing model': function () {
     for (const file of ['tools/checklevels.cjs', 'tools/genlevels.cjs']) {
       const code = source(file);
       const solverCode = code.slice(code.indexOf('function makeSolver('), code.indexOf('function analyse('));
@@ -501,25 +487,21 @@ const tests = {
       });
       const solver = makeSolver(rows);
       for (const side of [-1, 1]) {
-        const x = side < 0 ? 7 : 9, locked = side < 0 ? 2 : 3;
-        for (const mode of [1, 2, 3]) {
-          const moves = [];
-          solver.moves(x, 30, mode, false, function (nx, ny, next) { moves.push({ nx, ny, next }); });
-          const rising = moves.filter(function (m) { return m.ny < 30; });
-          if (mode === locked) assert.equal(rising.length, 0, file + ': same wall is locked');
-          else {
-            assert.ok(rising.length > 0, file + ': opposite wall is available');
-            assert.ok(rising.every(function (m) { return m.next === locked; }), file + ': kick records the wall side');
-          }
-          assert.ok(moves.some(function (m) { return m.ny > 30 && m.next === mode; }),
-            file + ': falling must retain the last wall');
-        }
+        const x = side < 0 ? 7 : 9;
+        const moves = [];
+        solver.moves(x, 30, 1, false, function (nx, ny, next) { moves.push({ nx, ny, next }); });
+        const rising = moves.filter(function (m) { return m.ny < 30; });
+        assert.ok(rising.length > 0, file + ': wall kicks are available on both sides');
+        assert.ok(rising.every(function (m) { return m.next === 1; }),
+          file + ': wall landings allow another kick without a side lock');
+        assert.ok(moves.some(function (m) { return m.ny > 30 && m.next === 1; }),
+          file + ': falling along a wall keeps wall kicks available');
       }
       rows[28][7] = '#';
       const landings = [];
-      solver.moves(9, 30, 2, false, function (nx, ny, next) { landings.push({ nx, ny, next }); });
+      solver.moves(9, 30, 1, false, function (nx, ny, next) { landings.push({ nx, ny, next }); });
       assert.ok(landings.some(function (m) { return m.nx === 7 && m.ny === 27 && m.next === 0; }),
-        file + ': landing clears the last wall');
+        file + ': a solid landing returns to ground mode');
     }
   },
   'take-off stretch and speed-scaled landing squash only change drawing': function () {

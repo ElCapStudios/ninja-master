@@ -153,10 +153,10 @@ function makeSolver(rows) {
     for (let r = top; r <= ny; r++) if (!free(nx, r, key)) return false;
     return true;
   }
-  function landing(x, y, key, nx, ny, R, push, lastWall = 0) {
+  function landing(x, y, key, nx, ny, R, push) {
     if (!pathOk(x, y, nx, ny, key, R)) return;
     if (rest(nx, ny, key)) push(nx, ny, 0);
-    else if (cling(nx, ny, key)) push(nx, ny, lastWall < 0 ? 2 : (lastWall > 0 ? 3 : 1));
+    else if (cling(nx, ny, key)) push(nx, ny, 1);
   }
   function moves(x, y, mode, key, push) {
     if (mode === 0) {
@@ -194,18 +194,15 @@ function makeSolver(rows) {
       }
       return;
     }
-    // Wall modes: 1 = no kick yet, 2 = last kick left, 3 = last kick right.
-    const lastWall = mode === 2 ? -1 : (mode === 3 ? 1 : 0);
     const wallLeft = solid(x - 1, y, key);
     const wallRight = solid(x + 1, y, key);
     for (let rise = 1; rise <= 3; rise++) {
       const m = MAXDX_WALL[rise];
       for (let d = -1; d <= 1; d += 2) {
-        if (lastWall === -d) continue;
         if (d < 0 && !wallRight) continue;
         if (d > 0 && !wallLeft) continue;
         for (let k = 1; k <= m; k++) {
-          landing(x, y, key, x + d * k, y - rise, Math.max(rise + 1, k), push, -d);
+          landing(x, y, key, x + d * k, y - rise, Math.max(rise + 1, k), push);
         }
       }
     }
@@ -213,7 +210,7 @@ function makeSolver(rows) {
       for (let ny = y + 1; ny < H; ny++) {
         const nx = x + d;
         if (!free(nx, ny, key)) break;
-        if (rest(nx, ny, key) || cling(nx, ny, key)) landing(x, y, key, nx, ny, 1, push, lastWall);
+        if (rest(nx, ny, key) || cling(nx, ny, key)) landing(x, y, key, nx, ny, 1, push);
       }
     }
   }
@@ -230,11 +227,11 @@ function analyse(rows, opts) {
   if (!start || !flag) return null;
 
   const allowKey = opts.allowKey !== false;
-  const N = W * H * 8;
+  const N = W * H * 4;
   const dist = new Int32Array(N).fill(-1);
   const from = [];
   const to = [];
-  function id(x, y, mode, key) { return ((y * W + x) * 4 + mode) * 2 + (key ? 1 : 0); }
+  function id(x, y, mode, key) { return ((y * W + x) * 2 + mode) * 2 + (key ? 1 : 0); }
 
   const s0 = id(start.x, start.y, 0, allowKey && s.at(start.x, start.y) === 'k');
   dist[s0] = 0;
@@ -243,8 +240,8 @@ function analyse(rows, opts) {
   while (head < queue.length) {
     const cur = queue[head++];
     const key = (cur & 1) === 1;
-    const mode = (cur >> 1) & 3;
-    const cell = cur >> 3;
+    const mode = (cur >> 1) & 1;
+    const cell = cur >> 2;
     const x = cell % W;
     const y = (cell - x) / W;
     const d = dist[cur];
@@ -262,7 +259,7 @@ function analyse(rows, opts) {
   const nextEdge = new Int32Array(from.length).fill(-1);
   for (let i = 0; i < from.length; i++) { nextEdge[i] = heads[to[i]]; heads[to[i]] = i; }
   const goals = [];
-  for (let mode = 0; mode < 4; mode++) {
+  for (let mode = 0; mode < 2; mode++) {
     for (let key = 0; key < 2; key++) {
       const gid = id(flag.x, flag.y, mode, key);
       if (dist[gid] >= 0) { back[gid] = 0; goals.push(gid); }
@@ -282,7 +279,7 @@ function analyse(rows, opts) {
 
   function best(arr, x, y) {
     let v = -1;
-    for (let mode = 0; mode < 4; mode++) {
+    for (let mode = 0; mode < 2; mode++) {
       for (let key = 0; key < 2; key++) {
         const t = arr[id(x, y, mode, key)];
         if (t >= 0 && (v < 0 || t < v)) v = t;
