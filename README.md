@@ -82,6 +82,17 @@ Walking into an enemy still hurts, so keep some space.
 | Squash | Land on an enemy head |
 | Fire | Press the fire key. Some enemies need a lot of hits |
 
+Held jumps hang a little longer near the top. Jump height stays within one
+pixel of the old height. Small head clips at a block corner can move you
+sideways by up to 4 pixels, so the jump keeps going.
+
+A wall kick works up to 3 pixels from the wall while you fall and hold
+towards it. As before, you can kick off the same wall again. Each wall
+slide refills one air jump. You can climb a lone wall or a shaft.
+
+The ninja stretches at take-off and squashes on landing. Hard landings
+squash more. This changes only the picture, not the hitbox.
+
 ## The worlds
 
 | # | World | Code | Enemies | Boss |
@@ -381,6 +392,21 @@ node tools/checklevels.cjs
 ```
 
 These need only Node.js. There is no build step and no package to install.
+
+The game checks also cover corner nudges, held-jump gravity and height,
+3-pixel wall reach, one-wall and shaft climbs, sprite-only stretch and
+squash, and the keyboard and touch hints on the start screen.
+
+To check the new movement and hints against the old game:
+
+```sh
+GAME_SOURCE_REF=24481a3 node tools/checkgame.cjs
+```
+
+The old 15 checks and the wall-climb guards must pass on that old source.
+The new feature checks must fail. Both level solvers keep the old wall-jump
+model and conservative jump ranges: held jumps gain less than one pixel
+of height.
 
 ### The letters in a level
 

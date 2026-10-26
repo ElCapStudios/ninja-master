@@ -975,7 +975,8 @@
       weapon: 'star', ammo: -1,
       hasKey: 0,
       onLadder: false, climbT: 0,
-      wallDir: 0, wallSlide: 0, wallLock: 0, wallKickT: 0
+      wallDir: 0, wallSlide: 0, wallLock: 0, wallKickT: 0,
+      drawScaleX: 1, drawScaleY: 1
     };
     safeSpot.x = spawn.x;
     safeSpot.y = spawn.y;
@@ -1029,6 +1030,7 @@
     player.wallDir = 0;
     player.wallSlide = 0;
     player.wallLock = 0;
+    player.drawScaleX = player.drawScaleY = 1;
     player.onLadder = false;
     bones = [];
     shurikens = [];
@@ -1119,6 +1121,35 @@
   var ACCEL = 0.55;
   var FRICTION = 0.55;
   var JUMP_V = -7.6;
+  var APEX_SPEED = 0.7;
+  var CORNER_NUDGE = 4;
+  var WALL_REACH = 3;
+
+  function solidBox(x, y, w, h) {
+    var x0 = Math.floor(x / TILE), x1 = Math.floor((x + w - 1) / TILE);
+    var y0 = Math.floor(y / TILE), y1 = Math.floor((y + h - 1) / TILE);
+    for (var cy = y0; cy <= y1; cy++) {
+      for (var cx = x0; cx <= x1; cx++) {
+        if (isSolid(tileAt(cx, cy))) { return true; }
+      }
+    }
+    return false;
+  }
+
+  function nudgeJumpCorner(p, oldY) {
+    if (p.vy >= 0 || !solidBox(p.x, p.y, p.w, p.h)) { return; }
+    for (var step = 1; step <= CORNER_NUDGE; step++) {
+      for (var side = -1; side <= 1; side += 2) {
+        var x = p.x + side * step;
+        if (x < 0 || x + p.w > level.pxW) { continue; }
+        /* Both the sideways path and the rise must be clear. */
+        if (solidBox(Math.min(p.x, x), oldY, p.w + step, p.h)) { continue; }
+        if (solidBox(x, p.y, p.w, p.h + oldY - p.y)) { continue; }
+        p.x = x;
+        return;
+      }
+    }
+  }
 
   function resolveX(e) {
     var y0 = Math.floor(e.y / TILE), y1 = Math.floor((e.y + e.h - 1) / TILE);
@@ -1192,6 +1223,20 @@
 
   /* ---------------- player actions ---------------- */
 
+  function stretchNinja(p) {
+    p.drawScaleX = 0.8;
+    p.drawScaleY = 1.2;
+  }
+
+  function squashNinja(p, wasGround, impact) {
+    if (!p.onGround || wasGround) { return; }
+    /* Ignore the collision solver's sub-pixel floor settling. */
+    if (impact <= GRAVITY * 2) { return; }
+    var squash = 0.3 * clamp(impact / MAX_FALL, 0, 1);
+    p.drawScaleX = 1 + squash;
+    p.drawScaleY = 1 - squash;
+  }
+
   function doJump() {
     var boost = player.bootT > 0 ? 1.16 : 1;
     if (player.onGround || player.coyote > 0) {
@@ -1199,11 +1244,13 @@
       player.jumpsLeft = maxJumps() - 1;
       player.coyote = 0;
       player.onGround = false;
+      stretchNinja(player);
       Sound.jump();
       burst(player.x + 5, player.y + 15, player.bootT > 0 ? '#5ad2ff' : '#8899bb', 5, 1.8);
     } else if (player.jumpsLeft > 0) {
       player.vy = JUMP_V * 0.92 * boost;
       player.jumpsLeft--;
+      stretchNinja(player);
       Sound.flip();
       burst(player.x + 5, player.y + 12, player.bootT > 0 ? '#5ad2ff' : '#ffffff', 7, 2.4);
     }
@@ -2055,6 +2102,11 @@
 
   function updatePlayer() {
     var p = player;
+    var wasGround = p.onGround;
+    p.drawScaleX += (1 - p.drawScaleX) * 0.3;
+    p.drawScaleY += (1 - p.drawScaleY) * 0.3;
+    if (Math.abs(1 - p.drawScaleX) < 0.005) { p.drawScaleX = 1; }
+    if (Math.abs(1 - p.drawScaleY) < 0.005) { p.drawScaleY = 1; }
     p.animT++;
     if (p.digCd > 0) { p.digCd--; }
     if (p.digT > 0) { p.digT--; }
@@ -2097,7 +2149,9 @@
       p.x += p.vx;
       resolveX(p);
       p.y += p.vy;
+      var climbImpact = p.vy;
       resolveY(p);
+      squashNinja(p, wasGround, climbImpact);
       p.x = clamp(p.x, 0, level.pxW - p.w);
       /* Stepping sideways off the ladder makes you fall like normal. */
       if (!tileHere(p, '|')) { p.onLadder = false; }
@@ -2146,15 +2200,19 @@
     if (!input.jumpHeld && p.vy < -2) { p.vy += 0.35; }
     if (throwEdge || input.throwHeld) { doThrow(); }
 
-    p.vy += GRAVITY;
+    p.vy += GRAVITY * (input.jumpHeld && Math.abs(p.vy) < APEX_SPEED ? 0.5 : 1);
     if (p.vy > MAX_FALL) { p.vy = MAX_FALL; }
 
     p.x += p.vx;
     resolveX(p);
     var wasBottom = p.y + p.h;
+    var oldY = p.y;
+    var impact = p.vy;
     p.y += p.vy;
+    nudgeJumpCorner(p, oldY);
     resolveY(p);
     landOnIce(p, wasBottom);
+    squashNinja(p, wasGround, impact);
 
     /* Springs throw you high in the air. */
     if (p.onGround && p.hitTile === 'T') {
@@ -2162,6 +2220,7 @@
       p.onGround = false;
       p.coyote = 0;
       p.jumpsLeft = maxJumps();
+      stretchNinja(p);
       springs[p.hitCx + ':' + p.hitCy] = 12;
       Sound.spring();
       burst(p.x + 5, p.y + 15, '#a8ff5a', 10, 3);
@@ -2205,6 +2264,7 @@
         /* Landing on a head always hurts, even through armour. */
         damageEnemy(e, e.kind === 'boss' ? 1 : stompDamage(e), 'stomp');
         p.vy = e.kind === 'boss' ? -6.6 : -5.6;
+        stretchNinja(p);
         if (e.kind === 'boss') { game.shake = 8; }
         p.jumpsLeft = Math.max(p.jumpsLeft, 1);
         Sound.stomp();
@@ -2250,13 +2310,16 @@
 
   /* Is there a wall to grab on this side of the ninja? */
   function wallBeside(p, d) {
-    var px = d > 0 ? p.x + p.w + 1 : p.x - 1;
-    var cx = Math.floor(px / TILE);
     var c1 = Math.floor((p.y + 3) / TILE);
     var c2 = Math.floor((p.y + p.h - 3) / TILE);
-    var a = tileAt(cx, c1), b = tileAt(cx, c2);
-    /* Thin platforms are too small to hold on to. */
-    return (a === '#' || a === '/' || a === '+') || (b === '#' || b === '/' || b === '+');
+    for (var gap = 0; gap <= WALL_REACH; gap++) {
+      var px = d > 0 ? p.x + p.w + gap : p.x - 1 - gap;
+      var cx = Math.floor(px / TILE);
+      var a = tileAt(cx, c1), b = tileAt(cx, c2);
+      /* Thin platforms are too small to hold on to. */
+      if ((a === '#' || a === '/' || a === '+') || (b === '#' || b === '/' || b === '+')) { return true; }
+    }
+    return false;
   }
 
   function doWallJump(wallDir) {
@@ -2267,6 +2330,7 @@
     p.wallLock = 9;
     p.wallKickT = 12;
     p.wallSlide = 0;
+    stretchNinja(p);
     p.jumpsLeft = Math.max(0, maxJumps() - 1);
     p.onGround = false;
     p.coyote = 0;
@@ -3549,7 +3613,15 @@
       parts.push([dx + 5, dy + 4, 2, 1, '#ffffff']);
     }
 
+    /* Draw around the feet without changing the collision box. */
+    var sx = p.drawScaleX || 1, sy = p.drawScaleY || 1;
+    var footX = dx + 6, footY = dy + 16;
+    ctx.save();
+    ctx.translate(footX, footY);
+    ctx.scale(sx, sy);
+    ctx.translate(-footX, -footY);
     drawSprite(parts);
+    ctx.restore();
   }
 
   function drawZombie(e) {
@@ -4150,14 +4222,15 @@
     var bob = Math.sin(game.frame * 0.05) * 3;
     text('NINJA MASTER', VIEW_W / 2, 58 + bob, 34, '#e8483a');
 
-    drawNinjaBig(VIEW_W / 2 - 18, 96 + bob * 0.5, 3);
+    drawNinjaBig(VIEW_W / 2 - 18, 88 + bob * 0.5, 3);
 
-    text('KEYBOARD', VIEW_W / 2, 162, 11, '#ffd93d');
-    text('ARROWS or A D to move    SPACE to jump', VIEW_W / 2, 176, 10, 'rgba(255,255,255,0.85)');
-    text('X to shoot.  Jump at a wall to wall jump.', VIEW_W / 2, 188, 10, 'rgba(255,255,255,0.85)');
-    text('PHONE or TABLET:  use the round buttons', VIEW_W / 2, 204, 10, 'rgba(255,255,255,0.85)');
-    text('8 worlds.  48 levels.  8 bosses.', VIEW_W / 2, 220, 10, '#ffd93d');
-    text('Find 3 gems hidden in every level.', VIEW_W / 2, 232, 10, '#7ad8c8');
+    text('KEYBOARD', VIEW_W / 2, 150, 11, '#ffd93d');
+    text('ARROWS or A D: move   SPACE: jump   X: shoot', VIEW_W / 2, 163, 10, 'rgba(255,255,255,0.85)');
+    text('Hold C: dig   P or Escape: pause', VIEW_W / 2, 175, 10, 'rgba(255,255,255,0.85)');
+    text('Hold towards a wall, then jump to kick off.', VIEW_W / 2, 187, 10, 'rgba(255,255,255,0.85)');
+    text('TOUCH: use the round buttons', VIEW_W / 2, 203, 10, 'rgba(255,255,255,0.85)');
+    text('Hold DIG to dig. Tap PAUSE to pause.', VIEW_W / 2, 215, 10, 'rgba(255,255,255,0.85)');
+    text('8 worlds. 48 levels. 8 bosses. 3 gems per level.', VIEW_W / 2, 232, 10, '#7ad8c8');
 
     if (Math.floor(game.frame / 30) % 2 === 0) {
       text('PRESS SPACE  or  TAP TO START', VIEW_W / 2, 252, 13, '#ffffff');

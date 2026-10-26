@@ -14,6 +14,7 @@ function source(file) {
 
 function game(save) {
   const nodes = {};
+  const draws = [];
   function node(id) {
     if (nodes[id]) return nodes[id];
     const events = {};
@@ -36,7 +37,12 @@ function game(save) {
   }
   const drawing = new Proxy({
     createLinearGradient: function () { return { addColorStop: function () {} }; },
-    measureText: function (text) { return { width: text.length * 5 }; }
+    measureText: function (text) { return { width: text.length * 5 }; },
+    fillText: function (...args) { draws.push(['text', ...args]); },
+    save: function () { draws.push(['save']); },
+    restore: function () { draws.push(['restore']); },
+    translate: function (...args) { draws.push(['translate', ...args]); },
+    scale: function (...args) { draws.push(['scale', ...args]); }
   }, { get: function (obj, key) { return key in obj ? obj[key] : function () {}; } });
   node('game').getContext = function () { return drawing; };
   const win = node('window');
@@ -58,6 +64,7 @@ function game(save) {
   sandbox.NinjaTerrain = win.NinjaTerrain;
   const exports = `window.CHECK = {
     update: update, render: render, goMode: goMode, startLevel: startLevel,
+    updatePlayer: updatePlayer, doJump: doJump, resolveY: resolveY, drawNinja: drawNinja,
     breakBlock: breakBlock, chipBlock: typeof chipBlock === 'function' ? chipBlock : null,
     doBlast: doBlast, damageEnemy: damageEnemy, enemyShoot: enemyShoot,
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
@@ -69,7 +76,7 @@ function game(save) {
   assert.ok(code.includes(exports), 'test hook must attach to the actual boot path');
   vm.runInContext(code, context);
   const n = win.NINJA, t = win.CHECK;
-  function tick(count = 1) { for (let i = 0; i < count; i++) { t.update(); t.render(); } }
+  function tick(count = 1) { for (let i = 0; i < count; i++) { t.update(); draws.length = 0; t.render(); } }
   function key(code) { win.fire('keydown', { code: code }); tick(); win.fire('keyup', { code: code }); }
   function tap(action, i) {
     t.render();
@@ -78,7 +85,41 @@ function game(save) {
     node('game').fire('pointerdown', { clientX: target.x + target.w / 2, clientY: target.y + target.h / 2 });
     tick();
   }
-  return { n, t, tick, key, tap, node, win, doc, storage };
+  return { n, t, tick, key, tap, node, win, doc, storage, draws };
+}
+
+function arena() {
+  const g = game();
+  g.n.goTo(0);
+  const l = g.n.level;
+  l.w = 32; l.h = 48; l.pxW = l.w * 16; l.pxH = l.h * 16;
+  l.grid = Array.from({ length: l.h }, function () { return Array(l.w).fill('.'); });
+  g.n.enemies.length = 0;
+  Object.assign(g.n.player, {
+    x: 120, y: 400, vx: 0, vy: 0, onGround: false,
+    jumpsLeft: 0, coyote: 0, invuln: 9999
+  });
+  g.jump = function (touch = false) {
+    if (touch) g.node('btn-jump').fire('pointerdown');
+    else g.win.fire('keydown', { code: 'Space' });
+    g.t.updatePlayer();
+    if (touch) g.node('btn-jump').fire('pointerup');
+    else g.win.fire('keyup', { code: 'Space' });
+  };
+  return g;
+}
+
+function oldFlight(speed, held) {
+  let y = 0, vy = speed, rise = 0, frames = 0, apexFrames = 0;
+  do {
+    if (Math.abs(vy) < 0.7) apexFrames++;
+    if (!held && vy < -2) vy += 0.35;
+    vy = Math.min(8, vy + 0.45);
+    y += vy;
+    rise = Math.max(rise, -y);
+    frames++;
+  } while (y < 0 && frames < 120);
+  return { rise, frames, apexFrames };
 }
 
 const tests = {
@@ -258,6 +299,281 @@ const tests = {
     assert.equal(g.n.game.mode, 'code');
     g.key('Escape'); g.n.menu.wsel = 8; g.key('ArrowRight'); g.key('Enter');
     assert.equal(g.n.game.mode, 'shop');
+  },
+  'rising head corners nudge by exactly 1-4 px on both sides': function () {
+    for (const side of [-1, 1]) {
+      for (let clip = 1; clip <= 4; clip++) {
+        const g = arena(), p = g.n.player;
+        g.n.level.grid[9][10] = '#';
+        p.x = side < 0 ? 160 - p.w + clip : 176 - clip;
+        p.y = 160; p.vy = -3;
+        const x = p.x;
+        g.n.input.jumpHeld = true;
+        g.t.updatePlayer();
+        assert.equal(p.x, x + side * clip, 'side ' + side + ', clip ' + clip);
+        assert.ok(p.y < 160 && p.vy < 0, 'the jump must keep rising');
+        assert.equal(g.n.level.grid[9][10], '#', 'no terrain is removed');
+      }
+    }
+  },
+  'corner nudges cannot pass wide ceilings, walls, floors or world edges': function () {
+    for (const side of [-1, 1]) {
+      const g = arena(), p = g.n.player;
+      g.n.level.grid[9][10] = '#';
+      p.x = side < 0 ? 155 : 171; p.y = 160; p.vy = -3;
+      const x = p.x;
+      g.t.updatePlayer();
+      assert.equal(p.x, x, 'a 5 px clip must stop the jump');
+      assert.equal(p.y, 160); assert.equal(p.vy, 0);
+    }
+    for (const setup of ['ceiling', 'edge', 'sidewall', 'fall']) {
+      const g = arena(), p = g.n.player;
+      p.y = 160; p.vy = -3;
+      if (setup === 'edge') {
+        g.n.level.grid[9][0] = '#'; p.x = 0;
+      } else {
+        g.n.level.grid[9][10] = '#'; p.x = 153;
+        if (setup === 'ceiling') g.n.level.grid[9][9] = '#';
+        if (setup === 'sidewall') g.n.level.grid[10][10] = '#';
+        if (setup === 'fall') { p.y = 128; p.vy = 3; }
+      }
+      const x = p.x;
+      g.t.updatePlayer();
+      assert.equal(p.x, x, setup);
+      assert.equal(p.vy, 0, setup);
+    }
+    const g = arena();
+    g.n.level.grid[9][10] = '#';
+    const enemy = { x: 153, y: 158, w: 10, h: 15, vy: -3 };
+    g.t.resolveY(enemy);
+    assert.equal(enemy.x, 153); assert.equal(enemy.vy, 0, 'enemy physics stay unchanged');
+  },
+  'held jump uses half gravity only in the narrow apex band': function () {
+    for (const held of [false, true]) {
+      for (const speed of [-4, -0.8, -0.4, 0.4, 0.8, 7.9]) {
+        const g = arena(), p = g.n.player;
+        p.vy = speed; g.n.input.jumpHeld = held;
+        g.t.updatePlayer();
+        const cut = !held && speed < -2 ? 0.35 : 0;
+        const gravity = held && Math.abs(speed) < 0.7 ? 0.225 : 0.45;
+        assert.ok(Math.abs(p.vy - Math.min(8, speed + cut + gravity)) < 1e-9,
+          'held ' + held + ', speed ' + speed + ', got ' + p.vy);
+      }
+    }
+  },
+  'floaty top adds time but keeps jump height within 1 px and tap hops unchanged': function () {
+    for (const boots of [false, true]) {
+      for (const air of [false, true]) {
+        for (const held of [false, true]) {
+          const g = arena(), p = g.n.player;
+          p.onGround = !air; p.jumpsLeft = air ? 1 : 2;
+          p.bootT = boots ? 999 : 0;
+          g.n.input.jumpHeld = held;
+          g.t.doJump();
+          const speed = -7.6 * (air ? 0.92 : 1) * (boots ? 1.16 : 1);
+          assert.equal(p.vy, speed, 'take-off speed must not change');
+          const old = oldFlight(speed, held);
+          let rise = 0, frames = 0, apexFrames = 0;
+          do {
+            if (Math.abs(p.vy) < 0.7) apexFrames++;
+            g.t.updatePlayer();
+            rise = Math.max(rise, 400 - p.y);
+            frames++;
+          } while (p.y < 400 && frames < 120);
+          assert.ok(Math.abs(rise - old.rise) < 1, JSON.stringify({ boots, air, held, rise, old }));
+          if (held) {
+            assert.ok(apexFrames >= old.apexFrames + 2, 'held jump must linger at the top');
+            assert.ok(frames >= old.frames + 2, 'held jump must stay in the air longer');
+          } else {
+            assert.equal(frames, old.frames, 'tap timing must stay unchanged');
+            assert.ok(Math.abs(rise - old.rise) < 1e-9, 'tap height must stay unchanged');
+          }
+        }
+      }
+    }
+    const g = arena(), p = g.n.player;
+    p.coyote = 6;
+    for (let i = 0; i < 5; i++) g.t.updatePlayer();
+    assert.equal(p.coyote, 1);
+    g.jump();
+    assert.ok(p.vy < -7, 'last coyote frame still allows a ground jump');
+    const h = arena();
+    h.n.player.coyote = 6;
+    for (let i = 0; i < 6; i++) h.t.updatePlayer();
+    assert.equal(h.n.player.coyote, 0, 'coyote time still expires after six frames');
+    h.jump(); assert.ok(h.n.player.vy > 0, 'expired coyote time must not allow a jump');
+  },
+  'wall kicks reach 3 px on either side by keyboard and touch, but not 4 px': function () {
+    for (const touch of [false, true]) {
+      for (const side of [-1, 1]) {
+        for (const gap of [0, 1, 2, 3, 4]) {
+          const g = arena(), p = g.n.player;
+          for (const row of g.n.level.grid) row[10] = '#';
+          p.x = side > 0 ? 160 - p.w - gap : 176 + gap;
+          p.vy = 1; p.facing = side;
+          g.n.input[side > 0 ? 'right' : 'left'] = true;
+          g.jump(touch);
+          if (gap <= 3) {
+            assert.ok(p.vy < -6, 'side ' + side + ', gap ' + gap + ', touch ' + touch);
+            assert.equal(p.vx, -side * 3);
+          } else {
+            assert.ok(p.vy > 0, '4 px is out of reach');
+          }
+        }
+      }
+    }
+    for (const rising of [false, true]) {
+      const g = arena(), p = g.n.player;
+      for (const row of g.n.level.grid) row[10] = '#';
+      p.x = 147; p.vy = rising ? -1 : 1;
+      g.n.input.right = rising;
+      g.jump();
+      assert.ok(p.vy > -2, 'still requires falling and holding towards the wall');
+    }
+  },
+  'wall slides refill an air jump and same-wall kicks remain repeatable': function () {
+    for (const touch of [false, true]) {
+      for (const side of [-1, 1]) {
+        const g = arena(), p = g.n.player;
+        for (const row of g.n.level.grid) row[10] = '#';
+        g.n.input[side > 0 ? 'right' : 'left'] = true;
+        for (let i = 0; i < 4; i++) {
+          Object.assign(p, {
+            x: side > 0 ? 150 : 176, y: 400, vy: 1, vx: 0,
+            wallLock: 0, jumpsLeft: 0
+          });
+          g.t.updatePlayer();
+          assert.equal(p.jumpsLeft, 1, 'every wall slide refills one air jump');
+          g.jump(touch);
+          assert.ok(p.vy < -6, 'the same wall must allow another kick');
+          assert.equal(p.vx, -side * 3);
+          assert.equal(p.wallLock, 9);
+          assert.equal(p.jumpsLeft, 1, 'wall kicks keep the old spare air jump');
+        }
+      }
+    }
+  },
+  'lone walls and shafts remain climbable with the old wall-jump rules': function () {
+    for (const shaft of [false, true]) {
+      const g = arena(), p = g.n.player;
+      for (const row of g.n.level.grid) {
+        row[10] = '#';
+        if (shaft) row[6] = '#';
+      }
+      p.x = 150; p.y = 600; p.vy = 1;
+      let side = 1, kicks = 0, best = p.y;
+      for (let frame = 0; frame < 1500 && p.y < 720 && p.y > 100; frame++) {
+        g.n.input.right = side > 0; g.n.input.left = side < 0;
+        g.n.input.jumpHeld = true;
+        const near = side > 0 ? p.x + p.w >= 159 : p.x <= 113;
+        if (near && p.vy > 0) {
+          g.win.fire('keydown', { code: 'Space' });
+        }
+        g.t.updatePlayer();
+        if (p.wallLock === 9) { kicks++; side = shaft ? -side : 1; }
+        best = Math.min(best, p.y);
+      }
+      assert.ok(kicks >= 6 && best < 300, JSON.stringify({ shaft, kicks, best }));
+    }
+  },
+  'both level solvers keep the old wall-kick and landing model': function () {
+    for (const file of ['tools/checklevels.cjs', 'tools/genlevels.cjs']) {
+      const code = source(file);
+      const solverCode = code.slice(code.indexOf('function makeSolver('), code.indexOf('function analyse('));
+      const makeSolver = new Function('MAXDX_UP', 'MAXDX_WALL', 'SPRING_RISE', 'SPRING_DX',
+        solverCode + '\nreturn makeSolver;')([4, 3, 3, 2], [0, 3, 3, 2], 6, 2);
+      const rows = Array.from({ length: 48 }, function () {
+        const row = Array(32).fill('.'); row[6] = '#'; row[10] = '#'; return row;
+      });
+      const solver = makeSolver(rows);
+      for (const side of [-1, 1]) {
+        const x = side < 0 ? 7 : 9;
+        const moves = [];
+        solver.moves(x, 30, 1, false, function (nx, ny, next) { moves.push({ nx, ny, next }); });
+        const rising = moves.filter(function (m) { return m.ny < 30; });
+        assert.ok(rising.length > 0, file + ': wall kicks are available on both sides');
+        assert.ok(rising.every(function (m) { return m.next === 1; }),
+          file + ': wall landings allow another kick without a side lock');
+        assert.ok(moves.some(function (m) { return m.ny > 30 && m.next === 1; }),
+          file + ': falling along a wall keeps wall kicks available');
+      }
+      rows[28][7] = '#';
+      const landings = [];
+      solver.moves(9, 30, 1, false, function (nx, ny, next) { landings.push({ nx, ny, next }); });
+      assert.ok(landings.some(function (m) { return m.nx === 7 && m.ny === 27 && m.next === 0; }),
+        file + ': a solid landing returns to ground mode');
+    }
+  },
+  'take-off stretch and speed-scaled landing squash only change drawing': function () {
+    for (const touch of [false, true]) {
+      const g = arena(), p = g.n.player;
+      p.onGround = true; p.jumpsLeft = 2;
+      g.jump(touch);
+      assert.ok(p.drawScaleX < 1 && p.drawScaleY > 1, 'take-off stretches');
+      p.invuln = 0;
+      const before = JSON.stringify(p);
+      g.draws.length = 0; g.t.drawNinja(p);
+      assert.ok(g.draws.some(function (d) { return d[0] === 'scale' && d[1] === p.drawScaleX && d[2] === p.drawScaleY; }),
+        'the sprite must use the scale values');
+      assert.equal(JSON.stringify(p), before, 'drawing cannot change physics');
+      assert.deepEqual(g.draws.filter(function (d) { return d[0] === 'translate'; }), [
+        ['translate', Math.round(p.x) + p.w / 2, Math.round(p.y) + p.h],
+        ['translate', -Math.round(p.x) - p.w / 2, -Math.round(p.y) - p.h]
+      ], 'scale around the feet');
+      assert.equal(g.draws[0][0], 'save'); assert.equal(g.draws.at(-1)[0], 'restore');
+      for (let i = 0; i < 20; i++) g.t.updatePlayer();
+      assert.equal(p.drawScaleX, 1); assert.equal(p.drawScaleY, 1, 'stretch settles quickly');
+      assert.equal(p.w, 10); assert.equal(p.h, 15);
+    }
+    const widths = [];
+    for (const impact of [1, 8]) {
+      const g = arena(), p = g.n.player;
+      g.n.level.grid[26].fill('#');
+      p.y = 401; p.vy = impact;
+      g.t.updatePlayer();
+      assert.ok(p.onGround); assert.equal(p.y, 401); assert.equal(p.vy, 0);
+      assert.ok(p.drawScaleX > 1 && p.drawScaleY < 1, 'landing squashes');
+      widths.push(p.drawScaleX);
+      for (let i = 0; i < 20; i++) g.t.updatePlayer();
+      assert.equal(p.drawScaleX, 1); assert.equal(p.drawScaleY, 1);
+      assert.equal(p.w, 10); assert.equal(p.h, 15);
+    }
+    assert.ok(widths[1] > widths[0], 'hard landings squash more');
+    for (const kind of ['air', 'wall', 'spring', 'ice']) {
+      const g = arena(), p = g.n.player;
+      if (kind === 'air') {
+        p.jumpsLeft = 1; g.jump();
+      } else if (kind === 'wall') {
+        for (const row of g.n.level.grid) row[10] = '#';
+        p.x = 147; p.vy = 1; g.n.input.right = true; g.jump();
+      } else if (kind === 'spring') {
+        g.n.level.grid[26].fill('T'); p.y = 401; p.vy = 3; g.t.updatePlayer();
+      } else {
+        g.n.enemies.push({ x: 112, y: 416, w: 24, h: 16, frozen: 99, alive: true });
+        p.y = 400; p.vy = 3; g.t.updatePlayer();
+      }
+      if (kind === 'ice') {
+        assert.ok(p.onGround && p.drawScaleX > 1 && p.drawScaleY < 1, 'ice landing squashes too');
+      } else {
+        assert.ok(p.vy < 0 && p.drawScaleX < 1 && p.drawScaleY > 1, kind + ' take-off stretches too');
+      }
+      assert.equal(p.w, 10); assert.equal(p.h, 15, kind + ' keeps its hitbox');
+    }
+    const g = arena(), p = g.n.player;
+    p.drawScaleX = 1.3; p.drawScaleY = 0.7;
+    g.t.respawn();
+    assert.equal(p.drawScaleX, 1); assert.equal(p.drawScaleY, 1, 'respawn clears the effect');
+  },
+  'title explains dig and pause for keyboard and touch without clipped text': function () {
+    const g = game(); g.tick();
+    const texts = g.draws.filter(function (d) { return d[0] === 'text'; });
+    const strings = texts.map(function (d) { return d[1]; });
+    assert.ok(strings.some(function (s) { return /hold c.*dig.*p or escape.*pause/i.test(s); }), 'keyboard dig and pause');
+    assert.ok(strings.some(function (s) { return /hold dig.*dig.*tap pause.*pause/i.test(s); }), 'touch dig and pause');
+    for (const d of texts) {
+      assert.ok(d[1].length * 5 <= 376, 'hint fits within the canvas: ' + d[1]);
+      assert.ok(d[3] >= 0 && d[3] <= 272, 'hint stays on screen');
+    }
   }
 };
 
