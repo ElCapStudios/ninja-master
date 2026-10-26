@@ -164,6 +164,35 @@ Two things to know:
 - Gems are spent, but the game still remembers you **found** them. Your gem
   count on the level screen never goes down.
 
+## Your ninja look
+
+Choose **MY NINJA** at the top of a menu or while the game is paused.
+Pick a suit colour, a headband colour, a belt colour and headwear.
+Each colour has a name. The preview shows the same ninja as the game.
+All these choices are free. They do not change moves, power or the hitbox.
+
+Choose **Apply look** to use and save the look. **Back** or Escape leaves
+without keeping changes you did not apply. **Default look** puts the old
+look in the preview; choose **Apply look** to keep it. A paused game stays
+paused when you close the picker.
+
+On a keyboard, use Tab to reach each group or button, arrow keys to pick
+within a group, and Space or Enter to use a button. The yellow outline
+shows keyboard focus. On a touch screen, tap a named choice. You can scroll
+the picker on small screens.
+
+If you own **Gold Ninja**, its gold suit and trim stay on. Coins still
+count double. You can change headwear, but its colour controls are off.
+Your chosen colours stay saved. Resetting your look does not remove shop
+items or progress. Star power still flashes the ninja's colours for its
+normal effect.
+
+Looks are saved on this browser only, in `ninjaMasterLookV1`. The game still
+uses `ninjaMasterSaveV2` for progress, gems, coins and shop items. Old saves
+and V1 are not changed. If a look cannot be read or saved, **NINJA !** marks
+the picker. Open it for the cause and how to fix it. A look that cannot be
+saved still works for that visit. Try **Apply look** again to save it.
+
 ## Medals
 
 Every level has 3 medals. There are 144 in the whole game.
@@ -396,6 +425,32 @@ These need only Node.js. There is no build step and no package to install.
 The game checks also cover corner nudges, held-jump gravity and height,
 3-pixel wall reach, one-wall and shaft climbs, sprite-only stretch and
 squash, and the keyboard and touch hints on the start screen.
+They also check look previews, save and reload, bad saved data, blocked
+storage, reset, game input while the picker is open, all suits and headwear
+with unchanged movement and collision, and Gold Ninja's double coins.
+
+To check the look feature against the main commit before it was added:
+
+```sh
+GAME_SOURCE_REF=0e51b35edbeb189e3f770d8a7269d2e4e54f53f3 node tools/checkgame.cjs
+```
+
+The eight customizer checks must fail because that game has no customizer.
+All other checks must pass. This uses the old game's script tags, so the
+failure is a missing feature assertion, not a missing script dependency.
+
+The browser check needs Playwright with its Chromium and WebKit browsers
+already installed:
+
+```sh
+node tools/checkcustomizer-browser.cjs
+```
+
+It opens `index.html` directly with `file://`. It checks desktop keyboard
+input and five tablet and phone sizes in both browsers. Set
+`PLAYWRIGHT_MODULE` to the path of an existing Playwright module if it is
+not on Node's module path. Set `BROWSER_CHECK_OUTPUT` to a folder outside
+the repo to keep screenshots and the result file.
 
 To check the new movement and hints against the old game:
 
@@ -573,10 +628,13 @@ Then open http://localhost:8000 in a browser.
 | `index.html` | The page, and the touch buttons |
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, weapons, bosses, menus, drawing |
+| `customizer.js` | Free ninja looks, the look picker, previews and a separate look save |
 | `terrain.js` | Shared rules for earth, firm ledges and safe digging |
 | `levels.js` | The level maps. Made by the helper, do not edit |
 | `tools/genlevels.cjs` | Builds `levels.js` out of chunks and checks the rules |
 | `tools/checklevels.cjs` | Reads `levels.js` back and plays every level with a robot |
+| `tools/checkgame.cjs` | Checks game behavior, old saves, looks and their safety rules |
+| `tools/checkcustomizer-browser.cjs` | Checks the look picker in Chromium and WebKit with keyboard and touch |
 | `v1/` | The first version of the game, kept exactly as it was |
 
 ## Versions

@@ -12,15 +12,19 @@ function source(file) {
     fs.readFileSync(path.join(root, file), 'utf8');
 }
 
-function game(save) {
+function game(save, options = {}) {
   const nodes = {};
   const draws = [];
+  const previewDraws = [];
+  let serial = 0;
   function node(id) {
     if (nodes[id]) return nodes[id];
     const events = {};
     const classes = new Set();
     return (nodes[id] = {
       hidden: false, textContent: '', attributes: {}, events: events,
+      children: [], style: {}, open: false, width: 72, height: 64,
+      appendChild: function (child) { this.children.push(child); },
       classList: {
         add: function (c) { classes.add(c); },
         remove: function (c) { classes.delete(c); },
@@ -32,29 +36,47 @@ function game(save) {
       },
       setAttribute: function (key, value) { this.attributes[key] = value; },
       getBoundingClientRect: function () { return { left: 0, top: 0, width: 384, height: 272 }; },
-      blur: function () {}
+      blur: function () {},
+      focus: function () { doc.activeElement = this; },
+      showModal: function () { this.open = true; },
+      close: function () { this.open = false; this.fire('close'); }
     });
   }
-  const drawing = new Proxy({
+  function drawingFor(log) { return new Proxy({
     createLinearGradient: function () { return { addColorStop: function () {} }; },
     measureText: function (text) { return { width: text.length * 5 }; },
-    fillText: function (...args) { draws.push(['text', ...args]); },
-    save: function () { draws.push(['save']); },
-    restore: function () { draws.push(['restore']); },
-    translate: function (...args) { draws.push(['translate', ...args]); },
-    scale: function (...args) { draws.push(['scale', ...args]); }
-  }, { get: function (obj, key) { return key in obj ? obj[key] : function () {}; } });
+    fillText: function (...args) { log.push(['text', ...args]); },
+    fillRect: function (...args) { log.push(['rect', this.fillStyle, ...args]); },
+    save: function () { log.push(['save']); },
+    restore: function () { log.push(['restore']); },
+    translate: function (...args) { log.push(['translate', ...args]); },
+    scale: function (...args) { log.push(['scale', ...args]); }
+  }, { get: function (obj, key) { return key in obj ? obj[key] : function () {}; } }); }
+  const drawing = drawingFor(draws);
   node('game').getContext = function () { return drawing; };
+  const previewDrawing = drawingFor(previewDraws);
+  node('customizer-preview').getContext = function () { return previewDrawing; };
   const win = node('window');
   const doc = node('document');
   doc.getElementById = node;
+  doc.createElement = function (tag) { const el = node('new-' + serial++); el.tagName = tag; return el; };
   doc.querySelectorAll = function () { return []; };
   doc.body = node('body');
   doc.documentElement = node('html');
-  const storage = new Map(save ? [['ninjaMasterSaveV2', JSON.stringify(save)]] : []);
+  const storage = options.storage || new Map(save ? [['ninjaMasterSaveV2', JSON.stringify(save)]] : []);
+  if (options.lookRaw !== undefined) storage.set('ninjaMasterLookV1', options.lookRaw);
   const sandbox = {
     window: win, document: doc, console: console,
-    localStorage: { getItem: function (k) { return storage.get(k) || null; }, setItem: function (k, v) { storage.set(k, v); } },
+    localStorage: {
+      getItem: function (k) {
+        if (options.failRead) throw Error('Storage blocked');
+        return storage.has(k) ? storage.get(k) : null;
+      },
+      setItem: function (k, v) {
+        if (options.failWrite) throw Error('Storage full');
+        storage.set(k, v);
+      }
+    },
     requestAnimationFrame: function () {}, setTimeout: function () {},
     Uint8Array: Uint8Array, Int32Array: Int32Array, Math: Math
   };
@@ -62,9 +84,12 @@ function game(save) {
   vm.runInContext(source('levels.js'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'terrain.js'), 'utf8'), context);
   sandbox.NinjaTerrain = win.NinjaTerrain;
+  const customizerLoaded = source('index.html').includes('<script src="customizer.js"></script>');
+  if (customizerLoaded) vm.runInContext(source('customizer.js'), context);
   const exports = `window.CHECK = {
     update: update, render: render, goMode: goMode, startLevel: startLevel,
     updatePlayer: updatePlayer, doJump: doJump, resolveY: resolveY, drawNinja: drawNinja,
+    updateCoins: updateCoins, get coins() { return coins; },
     breakBlock: breakBlock, chipBlock: typeof chipBlock === 'function' ? chipBlock : null,
     doBlast: doBlast, damageEnemy: damageEnemy, enemyShoot: enemyShoot,
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
@@ -72,7 +97,7 @@ function game(save) {
     get safeSpot() { return safeSpot; }, get spawn() { return spawn; },
     get bones() { return bones; }, get particles() { return particles; }
   };`;
-  const code = source('game.js').replace('  loadProgress();\n  game.best', exports + '\n  loadProgress();\n  game.best');
+  const code = source('game.js').replace('  loadProgress();\n', exports + '\n  loadProgress();\n');
   assert.ok(code.includes(exports), 'test hook must attach to the actual boot path');
   vm.runInContext(code, context);
   const n = win.NINJA, t = win.CHECK;
@@ -85,7 +110,23 @@ function game(save) {
     node('game').fire('pointerdown', { clientX: target.x + target.w / 2, clientY: target.y + target.h / 2 });
     tick();
   }
-  return { n, t, tick, key, tap, node, win, doc, storage, draws };
+  return { n, t, tick, key, tap, node, win, doc, storage, draws, previewDraws, looks: win.NinjaLooks, options };
+}
+
+function customizer(g = game()) {
+  assert.ok(g.looks, 'the running game must load the character customizer');
+  g.node('btn-customizer').fire('click');
+  assert.equal(g.node('customizer').open, true, 'MY NINJA must open the look picker');
+  g.choose = function (key, value) {
+    const radio = g.node('customizer-' + key).children.flatMap(function (label) { return label.children; })
+      .find(function (el) { return el.tagName === 'input' && el.value === value; });
+    assert.ok(radio, 'missing named option: ' + key + ' ' + value);
+    assert.equal(radio.disabled, false, 'option must be usable');
+    radio.checked = true; radio.fire('change');
+  };
+  g.apply = function () { g.node('customizer-apply').fire('click'); };
+  g.close = function () { g.node('customizer-back').fire('click'); };
+  return g;
 }
 
 function arena() {
@@ -123,6 +164,150 @@ function oldFlight(speed, held) {
 }
 
 const tests = {
+  'customizer applies independent colours and headwear and reloads without changing old saves': function () {
+    const save = { v: 4, max: 19, best: 700, gems: { 0: 7 }, coins: 230,
+      spentGems: 4, buys: { ice: 1, heart: 2 }, medals: { 0: 5 } };
+    const g = customizer(game(save));
+    const original = g.storage.get('ninjaMasterSaveV2');
+    g.choose('suit', 'ocean'); g.choose('headband', 'sky');
+    g.choose('belt', 'sun'); g.choose('headwear', 'sprout');
+    assert.equal(g.looks.current().suit, 'midnight', 'preview is not applied yet');
+    g.apply();
+    const wanted = { suit: 'ocean', headband: 'sky', belt: 'sun', headwear: 'sprout' };
+    assert.equal(JSON.stringify(g.looks.current()), JSON.stringify(wanted));
+    assert.equal(g.storage.get('ninjaMasterSaveV2'), original);
+    assert.equal(JSON.stringify(game(null, { storage: g.storage }).looks.current()), JSON.stringify(wanted));
+    assert.match(g.node('customizer-status').textContent, /applied and saved/);
+    g.close();
+    assert.equal(g.doc.activeElement, g.node('btn-customizer'));
+  },
+  'customizer rejects broken JSON, unknown values and old schemas with visible recovery': function () {
+    for (const raw of ['{', '', 'null', '[]', '{}',
+      '{"v":1,"suit":"not-a-colour","headband":"red","belt":"red","headwear":"none"}',
+      '{"v":2,"suit":"ocean","headband":"red","belt":"red","headwear":"none"}',
+      '{"v":1,"suit":"ocean","headband":"red","belt":"red","headwear":{}}']) {
+      const g = customizer(game(null, { lookRaw: raw }));
+      assert.equal(g.looks.current().suit, 'midnight');
+      assert.equal(g.looks.current().headwear, 'none');
+      assert.match(g.node('customizer-status').textContent, /saved look/);
+      assert.match(g.node('btn-customizer').textContent, /!/);
+      g.choose('headwear', 'cap'); g.apply();
+      assert.equal(JSON.parse(g.storage.get('ninjaMasterLookV1')).headwear, 'cap');
+      assert.equal(g.node('btn-customizer').textContent, 'MY NINJA');
+    }
+  },
+  'customizer storage failures give explicit visit-only feedback and allow a retry': function () {
+    const g = customizer(game(null, { failRead: true, failWrite: true }));
+    assert.match(g.node('customizer-status').textContent, /could not load/);
+    g.choose('suit', 'moss'); g.apply();
+    assert.equal(g.looks.current().suit, 'moss', 'the game can still use the look this visit');
+    assert.equal(g.storage.has('ninjaMasterLookV1'), false);
+    assert.match(g.node('customizer-status').textContent, /visit only.*could not save.*Try Apply look/);
+    g.options.failWrite = false; g.apply();
+    assert.equal(JSON.parse(g.storage.get('ninjaMasterLookV1')).suit, 'moss');
+    assert.match(g.node('customizer-status').textContent, /applied and saved/);
+  },
+  'customizer defaults reset only the look, and Back or Escape discards a draft': function () {
+    const g = customizer();
+    g.choose('suit', 'plum'); g.choose('headwear', 'crest'); g.apply();
+    g.choose('suit', 'ice'); g.close();
+    g.node('btn-customizer').fire('click');
+    assert.match(g.node('customizer-preview').attributes['aria-label'], /Plum suit/);
+    g.choose('suit', 'ember'); g.node('customizer').fire('cancel');
+    assert.equal(g.node('customizer').open, false);
+    assert.equal(g.looks.current().suit, 'plum');
+    g.node('btn-customizer').fire('click');
+    g.node('customizer-default').fire('click');
+    assert.equal(g.looks.current().suit, 'plum', 'reset waits for Apply look');
+    g.apply();
+    const reloaded = game(null, { storage: g.storage });
+    assert.equal(JSON.stringify(reloaded.looks.current()),
+      JSON.stringify({ suit: 'midnight', headband: 'red', belt: 'red', headwear: 'none' }));
+  },
+  'customizer uses the same colours in its preview, title, both maps and play': function () {
+    const g = customizer();
+    g.choose('suit', 'ocean'); g.choose('headband', 'sky'); g.choose('belt', 'sun'); g.choose('headwear', 'crest');
+    g.apply();
+    assert.match(g.node('customizer-preview').attributes['aria-label'], /Ocean.*Sky.*Sun.*Star crest/);
+    const wanted = ['#3284ad', '#225674', '#5aa8cb', '#5ad2ff', '#ffd93d'];
+    function check(log, label) {
+      for (const color of wanted) assert.ok(log.some(function (d) { return d[0] === 'rect' && d[1] === color; }), label + ' ' + color);
+      assert.ok(log.some(function (d) { return d[0] === 'rect' && d[4] === 2 && d[5] === 7; }), label + ' crest');
+    }
+    check(g.previewDraws, 'preview'); g.close();
+    for (const mode of ['title', 'worlds', 'levels', 'play']) {
+      if (mode === 'play') { g.n.goTo(0); g.n.player.invuln = 0; }
+      else g.t.goMode(mode);
+      g.draws.length = 0; g.t.render(); check(g.draws, mode);
+    }
+  },
+  'customizer keeps Gold Ninja colours, ownership and double coins after apply and reset': function () {
+    const g = customizer(game({ buys: { gold: 1 }, coins: 30, gems: { 0: 7 }, spentGems: 1 }));
+    assert.match(g.node('customizer-gold-note').textContent, /gold colours.*coins still count double/);
+    for (const key of ['suit', 'headband', 'belt']) {
+      assert.ok(g.node('customizer-' + key).children.every(function (label) { return label.children[0].disabled; }));
+    }
+    const save = g.storage.get('ninjaMasterSaveV2');
+    g.choose('headwear', 'cap'); g.apply(); g.close(); g.n.goTo(0);
+    assert.equal(g.n.owns('gold'), 1);
+    g.n.player.invuln = 0;
+    g.draws.length = 0; g.t.drawNinja(g.n.player);
+    for (const color of ['#d9a521', '#9c7212', '#f0cf6a', '#fff3b0']) {
+      assert.ok(g.draws.some(function (d) { return d[0] === 'rect' && d[1] === color; }), color);
+    }
+    const coin = g.t.coins[0]; g.n.player.x = coin.x; g.n.player.y = coin.y;
+    const bank = g.n.game.runCoins; g.t.updateCoins();
+    assert.equal(g.n.game.runCoins - bank, 2);
+    g.node('btn-customizer').fire('click'); g.node('customizer-default').fire('click'); g.apply();
+    assert.equal(g.n.owns('gold'), 1);
+    assert.equal(g.storage.get('ninjaMasterSaveV2'), save);
+    assert.match(g.node('customizer-preview').attributes['aria-label'], /Gold Ninja/);
+    assert.equal(game(null, { storage: g.storage }).n.owns('gold'), 1);
+  },
+  'customizer blocks game keys and ticks while open, and leaves a paused run paused': function () {
+    const g = game();
+    assert.ok(g.looks, 'the running game must load the character customizer');
+    for (const code of ['Space', 'Enter']) {
+      g.win.fire('keydown', { code, target: g.node('btn-customizer'),
+        preventDefault: function () { assert.fail('native button activation must not be blocked'); } });
+      g.tick();
+      assert.equal(g.n.game.mode, 'title', 'native activation cannot also select a game menu');
+    }
+    g.n.goTo(0); g.n.input.right = true;
+    g.node('btn-pause').fire('click'); g.tick();
+    customizer(g);
+    const snapshot = JSON.stringify([g.n.game, g.n.player, g.n.enemies]);
+    for (const key of ['Space', 'ArrowRight', 'Enter', 'KeyC', 'KeyX', 'Escape', 'KeyP']) g.key(key);
+    assert.equal(JSON.stringify([g.n.game, g.n.player, g.n.enemies]), snapshot);
+    assert.ok(Object.values(g.n.input).every(function (v) { return v === false; }));
+    g.close(); g.tick(30);
+    assert.equal(g.n.game.mode, 'paused');
+    g.key('Escape'); assert.equal(g.n.game.mode, 'play');
+    assert.equal(g.node('btn-customizer').hidden, true);
+  },
+  'every suit and headwear draws without changing movement or collision': function () {
+    for (const suit of ['midnight', 'ocean', 'moss', 'plum', 'ember', 'ice']) {
+      for (const headwear of ['none', 'sprout', 'cap', 'crest']) {
+        const g = arena(), control = arena();
+        customizer(g); g.choose('suit', suit); g.choose('headwear', headwear); g.apply(); g.close(); g.key('Escape');
+        for (const h of [g, control]) {
+          h.n.level.grid[26].fill('#'); h.n.player.y = 401; h.n.player.vy = 3; h.n.player.invuln = 0;
+        }
+        for (let i = 0; i < 30; i++) {
+          for (const h of [g, control]) {
+            h.n.input.right = i < 10; h.n.input.jumpHeld = i >= 10;
+            if (i === 10) h.jump();
+            h.t.updatePlayer();
+          }
+          assert.equal(JSON.stringify(g.n.player), JSON.stringify(control.n.player), suit + ' ' + headwear + ' frame ' + i);
+          const before = JSON.stringify(g.n.player);
+          g.t.drawNinja(g.n.player);
+          assert.equal(JSON.stringify(g.n.player), before);
+          assert.equal(g.n.player.w, 10); assert.equal(g.n.player.h, 15);
+        }
+      }
+    }
+  },
   'old saves keep progress, shop items, gems and medals': function () {
     const save = { v: 4, max: 19, best: 700, gems: { 0: 7, 2: 3 }, coins: 230, spentGems: 4, buys: { ice: 1, heart: 2 }, medals: { 0: 5 } };
     const g = game(save);
