@@ -62,6 +62,9 @@ function game(save) {
   vm.runInContext(source('levels.js'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'terrain.js'), 'utf8'), context);
   sandbox.NinjaTerrain = win.NinjaTerrain;
+  for (const file of ['level-rules.js', 'level-data.js']) {
+    vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
+  }
   const exports = `window.CHECK = {
     update: update, render: render, goMode: goMode, startLevel: startLevel,
     updatePlayer: updatePlayer, doJump: doJump, resolveY: resolveY, drawNinja: drawNinja,
@@ -69,6 +72,8 @@ function game(save) {
     doBlast: doBlast, damageEnemy: damageEnemy, enemyShoot: enemyShoot,
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
     doThrow: doThrow, updateShurikens: updateShurikens,
+    killPlayer: killPlayer, gameOver: gameOver, bankRun: bankRun, saveBest: saveBest, saveProgress: saveProgress,
+    markGem: markGem, awardMedals: awardMedals, unlockUpTo: unlockUpTo,
     get safeSpot() { return safeSpot; }, get spawn() { return spawn; },
     get bones() { return bones; }, get particles() { return particles; }
   };`;
@@ -129,6 +134,110 @@ const tests = {
     for (const k of Object.keys(save).filter(function (k) { return k !== 'v'; })) {
       assert.equal(JSON.stringify(g.n.progress[k]), JSON.stringify(save[k]), k);
     }
+  },
+  'custom maps validate before loading and never replace the campaign': function () {
+    const g = game(), data = g.win.NinjaLevelData;
+    const originalWidth = g.n.level.w;
+    assert.equal(typeof g.n.openEditor, 'function', 'level editor entry must exist in the game');
+    assert.ok(g.n.openEditor());
+    const invalid = data.template(); invalid.rows.pop();
+    assert.ok(g.n.playCustom(invalid).error);
+    assert.equal(g.n.game.mode, 'editor');
+    for (let world = 0; world < 8; world++) {
+      const draft = data.template(); draft.world = world;
+      assert.equal(g.n.playCustom(draft).error, undefined);
+      assert.equal(g.n.level.w, 24); assert.equal(g.n.level.h, 17);
+      assert.equal(g.n.level.world, world);
+      assert.equal(g.n.level.pal, g.n.editorPalette(world));
+      g.n.level.grid[14][6] = '.';
+      g.n.restartCustom();
+      assert.equal(g.n.level.grid[14][6], '#', 'retry restores the draft tiles');
+      assert.equal(draft.rows[14][6], '#', 'play never digs into the draft');
+      g.n.returnToEditor();
+      assert.equal(g.n.game.mode, 'editor');
+    }
+    g.n.closeEditor();
+    assert.equal(g.n.game.mode, 'title');
+    assert.equal(g.n.level.w, originalWidth, 'original campaign level stays intact');
+  },
+  'custom gems, coins, medals, unlocks, shop and best scores never write campaign data': function () {
+    const save = { v: 4, max: 19, best: 700, gems: { 0: 7 }, coins: 230, spentGems: 0,
+      buys: { ice: 1 }, medals: { 0: 5 } };
+    const g = game(save), data = g.win.NinjaLevelData;
+    assert.equal(typeof g.n.playCustom, 'function', 'custom play must exist');
+    const draft = data.template();
+    data.paint(draft, 3, 13, 'g'); data.paint(draft, 4, 13, 'o');
+    const raw = g.storage.get('ninjaMasterSaveV2'), progress = JSON.stringify(g.n.progress);
+    g.n.openEditor(); g.n.playCustom(draft);
+    function unchanged(label) {
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), raw, label + ': stored save is byte-for-byte unchanged');
+      assert.equal(JSON.stringify(g.n.progress), progress, label + ': no in-memory rewards');
+    }
+    g.n.player.x = 3 * 16 + 3; g.n.player.y = 13 * 16 + 1; g.tick();
+    assert.equal(g.n.gems[0].taken, true, 'collect a real custom gem');
+    unchanged('gem');
+    g.n.player.x = 4 * 16 + 3; g.n.player.y = 13 * 16 + 1; g.tick();
+    assert.ok(g.n.game.runCoins > 0, 'collect a real custom coin'); unchanged('coin');
+    g.n.game.score = 99999;
+    g.n.game.best = 99999; g.t.saveProgress(); unchanged('save guard'); g.n.game.best = 700;
+    g.t.markGem(1, 1); g.t.awardMedals(0, 7); g.t.unlockUpTo(48);
+    g.t.bankRun(); g.t.saveBest();
+    assert.equal(g.n.game.best, 700, 'custom scores do not change best score in memory');
+    assert.equal(g.n.buy('heart'), false);
+    g.n.giveCoins(500); g.n.unlockAll(); g.n.wipeSave(); g.n.openShop();
+    g.n.goTo(47);
+    assert.equal(g.n.game.score, 99999, 'debug goTo cannot reset the custom run');
+    assert.equal(g.n.customPlaying, true, 'debug goTo cannot bypass the custom boundary');
+    assert.equal(g.n.game.mode, 'play');
+    unchanged('direct reward and debug paths');
+    g.n.player.x = g.n.flag.x; g.n.player.y = g.n.flag.y + 32;
+    g.n.player.vx = 0; g.n.player.vy = 0; g.tick();
+    assert.equal(g.n.game.mode, 'clear', 'real flag completion');
+    g.tick(150); assert.equal(g.n.game.mode, 'clear', 'never advance into campaign'); unchanged('clear');
+    g.key('Space'); assert.equal(g.n.game.mode, 'play'); unchanged('completion replay');
+    for (const mode of ['gameover', 'win']) {
+      g.t.goMode(mode); g.tick(150); unchanged(mode);
+      g.key('Space'); assert.equal(g.n.game.mode, 'play'); unchanged(mode + ' replay');
+    }
+    g.n.game.hearts = 1; g.t.killPlayer(); g.tick(60);
+    assert.equal(g.n.game.mode, 'gameover'); unchanged('death');
+    g.key('Escape'); assert.equal(g.n.game.mode, 'editor'); unchanged('exit after death');
+    g.n.closeEditor(); unchanged('back to game');
+  },
+  'custom pause, retry and all exits return to the same campaign selection': function () {
+    const g = game({ v: 4, max: 19, best: 700, coins: 230, buys: { heart: 2 } });
+    assert.equal(typeof g.n.openEditor, 'function', 'editor entry must exist');
+    g.n.goTo(8); g.t.goMode('levels');
+    const snapshot = JSON.stringify([g.n.game.level, g.n.game.score, g.n.game.hearts, g.n.game.maxHearts, g.n.game.best, g.n.menu.world, g.n.menu.level]);
+    const raw = g.storage.get('ninjaMasterSaveV2'), progress = JSON.stringify(g.n.progress);
+    const draft = g.win.NinjaLevelData.template();
+    for (const exit of ['direct', 'pause', 'menu', 'clear-back', 'gameover-back', 'win-back']) {
+      assert.ok(g.n.openEditor());
+      g.n.playCustom(draft);
+      assert.equal(g.n.game.maxHearts, 5);
+      assert.equal(g.n.openEditor(), false, 'cannot open a nested editor from play');
+      if (exit === 'direct') { g.n.returnToEditor(); }
+      else if (exit === 'pause' || exit === 'menu') {
+        g.node('btn-pause').fire('click'); g.tick();
+        g.tap('pause', 1); assert.equal(g.n.game.mode, 'play');
+        assert.equal(g.n.game.maxHearts, 5, 'pause restart stays in custom play');
+        g.node('btn-pause').fire('click'); g.tick();
+        if (exit === 'pause') { g.tap('pause', 2); }
+        else { g.node('btn-menu').fire('click'); }
+      } else {
+        g.t.goMode(exit.split('-')[0]); g.key('Escape');
+      }
+      assert.equal(g.n.game.mode, 'editor', exit);
+      g.n.closeEditor(); assert.equal(g.n.game.mode, 'levels', exit);
+      assert.equal(JSON.stringify([g.n.game.level, g.n.game.score, g.n.game.hearts, g.n.game.maxHearts, g.n.game.best, g.n.menu.world, g.n.menu.level]), snapshot, exit + ': resume state');
+      assert.equal(JSON.stringify(g.n.progress), progress);
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), raw);
+    }
+    g.t.startLevel(8);
+    assert.equal(g.n.level.world, 1); assert.equal(g.n.customPlaying, false);
+    g.t.markGem(8, 0);
+    assert.ok(g.n.progress.gems[8] & 1, 'campaign saving still works after leaving custom play');
+    assert.notEqual(g.storage.get('ninjaMasterSaveV2'), raw);
   },
   'keyboard pause freezes the whole run and clears held input': function () {
     const g = game(); g.n.goTo(0); g.tick();
@@ -480,8 +589,10 @@ const tests = {
     for (const file of ['tools/checklevels.cjs', 'tools/genlevels.cjs']) {
       const code = source(file);
       const solverCode = code.slice(code.indexOf('function makeSolver('), code.indexOf('function analyse('));
-      const makeSolver = new Function('MAXDX_UP', 'MAXDX_WALL', 'SPRING_RISE', 'SPRING_DX',
-        solverCode + '\nreturn makeSolver;')([4, 3, 3, 2], [0, 3, 3, 2], 6, 2);
+      const makeSolver = file === 'tools/checklevels.cjs' && !code.includes('function makeSolver(') ?
+        require('../level-rules.js').makeSolver :
+        new Function('MAXDX_UP', 'MAXDX_WALL', 'SPRING_RISE', 'SPRING_DX',
+          solverCode + '\nreturn makeSolver;')([4, 3, 3, 2], [0, 3, 3, 2], 6, 2);
       const rows = Array.from({ length: 48 }, function () {
         const row = Array(32).fill('.'); row[6] = '#'; row[10] = '#'; return row;
       });

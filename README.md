@@ -46,6 +46,52 @@ Tap **PAUSE** or **MENU** at the top to pause. You can resume, restart the
 level, or return to the map. The game also pauses when you leave its tab.
 It waits for you to resume, so switching apps cannot cost you a heart.
 
+## Make a level
+
+Choose **MAKE LEVEL** at the top of the title or map screen.
+You start with a safe floor, one Start and one Flag.
+The editor uses the same tiles and world colors as the game.
+
+1. Pick a tile, then tap or drag on the grid to paint. **Erase** removes tiles.
+2. Choose a world and give your level a name.
+3. Choose **Level 1**, **Level 2** or **Level 3**, then **Save draft**.
+4. Choose **Test level**. Use the normal touch buttons or keyboard to play.
+5. Choose **EDIT LEVEL** to return to the same draft. **TRY AGAIN** resets
+   the test. Pause also has restart and **BACK TO EDITOR**.
+
+The grid has **24 columns and 17 rows**. It does not resize.
+**Start** and **Flag** move when you place them again, so each has one spot.
+Put both on a floor or ladder, away from the top and side edges.
+The editor has 18 tile tools. A test can have up to 3 gems, 16 zombies and
+64 items in all, so it stays small for older tablets.
+
+On a small phone, turn **Move view** on to scroll the grid, then turn it off
+to paint. Each tile stays at least 24 pixels wide. **Undo** brings back the
+last change or whole paint stroke. It keeps up to 30 changes, including a
+loaded slot or **Fresh floor**.
+
+With a keyboard, use Tab to focus the grid. Arrows move the yellow box.
+Space or Enter paints. Delete or Backspace erases. Ctrl+Z (Command+Z on a Mac)
+undoes. Tab also reaches the tile tools, settings and save buttons.
+Escape returns to the game menu without losing the open draft.
+
+Drafts stay in this browser on this device. Save before closing the page.
+A saved draft can be unfinished. **Load slot** restores it after a page
+reload. Check the save message: full or blocked storage cannot keep a draft.
+Clearing browser data removes saved levels. There are no accounts, online
+sharing or import/export tools.
+
+Before a test, the editor checks the size, tile letters, theme, Start and
+Flag. It uses the campaign checker's movement rules to look for a path.
+**No clear path found** is a warning, not proof: the check can miss wall jumps
+and digging. Add ledges or ladders, or choose **Test anyway**.
+
+Test levels do not add campaign coins, gems, medals, shop items, best scores
+or unlocked levels. Death, retry, completion and exit all stay in test mode.
+Your campaign map choice and the `ninjaMasterSaveV2` save stay unchanged.
+Custom slots use separate keys, `ninjaMasterLevelSlot1` through
+`ninjaMasterLevelSlot3`. The old game in `/v1/` is unchanged.
+
 ## Dig your own route
 
 Hold **C** or **DIG** to cut through earth and cracked walls. Digging has no
@@ -517,8 +563,37 @@ power up, a weapon or a tile.
     reach it.
 
 `node tools\genlevels.cjs` builds `levels.js` and checks all of these.
-`node tools\checklevels.cjs` checks them again on its own. Never edit
-`levels.js` by hand.
+`node tools\checklevels.cjs` checks them again. Its movement rules are shared
+with the local editor in `level-rules.js`; the generator keeps its own model.
+Never edit `levels.js` by hand.
+
+### Editor and game checks
+
+Run these from the project folder. They need only Node.js:
+
+```sh
+node tools/checkgame.cjs
+node tools/checklevels.cjs
+node tools/checkeditor.cjs
+```
+
+The editor check covers paint, erase, saved data, limits and storage errors.
+It also compares the shared movement rules with the independent generator on
+every campaign tile. The game check covers custom rewards, death, replay,
+pause, exit and returning to campaign play.
+
+For browser checks, use an installed Playwright package with its Chromium
+and WebKit browsers:
+
+```sh
+node tools/checkeditor-browser.cjs
+```
+
+If Playwright is installed outside this folder, set `PLAYWRIGHT_MODULE` to
+its module path. Set `EDITOR_ARTIFACTS` to choose where screenshots and the
+result JSON go. The check runs desktop and five touch screen sizes in both
+browsers, using `file://index.html`. Playwright is a test tool, not a game
+dependency.
 
 ## Handy tricks for testing
 
@@ -557,7 +632,8 @@ To see the game loop run at full speed in a headless browser you must replace
 
 ## Run it on your own computer
 
-You need a small web server, because browsers block local files.
+Open `index.html` directly in a browser. The game and editor also work from
+a small local web server:
 
 ```powershell
 cd C:\Users\erinels\ninja-master
@@ -574,9 +650,15 @@ Then open http://localhost:8000 in a browser.
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, weapons, bosses, menus, drawing |
 | `terrain.js` | Shared rules for earth, firm ledges and safe digging |
+| `level-editor.js`, `level-editor.css` | The touch and keyboard level editor |
+| `level-data.js` | Bounded custom maps, validation and three local save slots |
+| `level-rules.js` | Conservative movement model shared by the editor and checker |
 | `levels.js` | The level maps. Made by the helper, do not edit |
 | `tools/genlevels.cjs` | Builds `levels.js` out of chunks and checks the rules |
 | `tools/checklevels.cjs` | Reads `levels.js` back and plays every level with a robot |
+| `tools/checkgame.cjs` | Checks game behavior and campaign save safety |
+| `tools/checkeditor.cjs` | Checks custom maps and compares both movement models |
+| `tools/checkeditor-browser.cjs` | Checks the editor in Chromium and WebKit |
 | `v1/` | The first version of the game, kept exactly as it was |
 
 ## Versions

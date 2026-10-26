@@ -177,6 +177,7 @@
   var KEY_DOWN = { ArrowDown: 1, KeyS: 1 };
 
   window.addEventListener('keydown', function (e) {
+    if (game.mode === 'editor') { return; }
     Sound.init();
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
@@ -471,6 +472,8 @@
   /* V2 keeps its own save, so the old V1 game in /v1/ never loses your place. */
   var SAVE_KEY = 'ninjaMasterSaveV2';
   var progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
+  var customLevel = null;
+  var editorReturn = null;
 
   function loadProgress() {
     try {
@@ -490,6 +493,7 @@
   }
 
   function saveProgress() {
+    if (customLevel) { return; }
     if (game.best > progress.best) { progress.best = game.best; }
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
@@ -540,6 +544,7 @@
   }
 
   function buyItem(it) {
+    if (customLevel) { return false; }
     if (canBuy(it) !== 'OK') { return false; }
     if (it.money === 'gem') { progress.spentGems += it.cost; }
     else { progress.coins -= it.cost; }
@@ -582,6 +587,7 @@
   }
   /* Returns the medals you won this try that you did not already have. */
   function awardMedals(levelIndex, won) {
+    if (customLevel) { return 0; }
     var had = medalsOf(levelIndex);
     var fresh = won & ~had;
     if (fresh) { progress.medals[levelIndex] = had | won; saveProgress(); }
@@ -600,6 +606,7 @@
     return n;
   }
   function markGem(levelIndex, slot) {
+    if (customLevel) { return false; }
     var s = gemsFound(levelIndex);
     if (s & (1 << slot)) { return false; }
     progress.gems[levelIndex] = s | (1 << slot);
@@ -613,6 +620,7 @@
   }
 
   function unlockUpTo(n) {
+    if (customLevel) { return; }
     if (n > progress.max) { progress.max = Math.min(n, LEVELS.length); saveProgress(); }
   }
 
@@ -853,9 +861,9 @@
   }
 
   function loadLevel(index) {
-    var def = LEVELS[index];
+    var def = customLevel || LEVELS[index];
     var rows = def.rows;
-    var w = worldOf(index);
+    var w = customLevel ? customLevel.world : worldOf(index);
     var info = WORLDS[w] || WORLDS[0];
     game.world = w;
     level = {
@@ -1632,6 +1640,7 @@
   }
 
   function saveBest() {
+    if (customLevel) { return; }
     if (game.score > game.best) { game.best = game.score; }
     saveProgress();
   }
@@ -1639,6 +1648,7 @@
   /* ---------------- update ---------------- */
 
   function update() {
+    if (game.mode === 'editor') { return; }
     if (pauseEdge && (game.mode === 'play' || game.mode === 'paused')) {
       setPaused(game.mode === 'play');
       return;
@@ -1683,10 +1693,60 @@
   function syncControls() {
     var playing = game.mode === 'play';
     document.body.classList.toggle('playing', playing);
+    document.body.classList.toggle('custom-testing', !!customLevel);
     pauseBtn.hidden = !playing && game.mode !== 'paused';
     pauseBtn.textContent = game.mode === 'paused' ? 'RESUME' : 'PAUSE';
     pauseBtn.setAttribute('aria-label', game.mode === 'paused' ? 'Resume game' : 'Pause game');
     pauseBtn.setAttribute('aria-pressed', String(game.mode === 'paused'));
+    var editorBtn = document.getElementById('btn-editor');
+    editorBtn.hidden = ['title', 'worlds', 'levels'].indexOf(game.mode) < 0;
+    document.getElementById('custom-playbar').hidden = !customLevel;
+  }
+
+  function openEditor() {
+    if (['title', 'worlds', 'levels'].indexOf(game.mode) < 0 || customLevel) { return false; }
+    editorReturn = { game: Object.assign({}, game), menu: Object.assign({}, menu) };
+    goMode('editor');
+    return true;
+  }
+
+  function closeEditor() {
+    if (!editorReturn || customLevel) { return; }
+    var mode = editorReturn.game.mode;
+    Object.assign(game, editorReturn.game);
+    Object.assign(menu, editorReturn.menu);
+    editorReturn = null;
+    goMode(mode);
+  }
+
+  function playCustom(draft) {
+    if (!editorReturn || (game.mode !== 'editor' && !customLevel)) { return { error: 'Open the level editor first.' }; }
+    var checked = window.NinjaLevelData.validate(draft, true);
+    if (checked.error) { return checked; }
+    customLevel = checked.value;
+    customLevel.kind = 'run';
+    restartCustom();
+    return checked;
+  }
+
+  function restartCustom() {
+    if (!customLevel) { return; }
+    game.score = 0;
+    game.maxHearts = START_HEARTS;
+    game.hearts = START_HEARTS;
+    loadLevel(game.level);
+    goMode('play');
+  }
+
+  function returnToEditor() {
+    if (!customLevel || !editorReturn) { return; }
+    customLevel = null;
+    Object.assign(game, editorReturn.game);
+    Object.assign(menu, editorReturn.menu);
+    loadLevel(game.level);
+    Object.assign(game, editorReturn.game);
+    goMode('editor');
+    if (window.NinjaLevelEditor) { window.NinjaLevelEditor.show('Back to your draft. Test-play does not save changes to tiles.'); }
   }
 
   function setPaused(paused) {
@@ -1706,6 +1766,7 @@
   }
 
   function leaveLevel() {
+    if (customLevel) { returnToEditor(); return; }
     menu.world = worldOf(game.level);
     menu.level = game.level - firstLevelOf(menu.world);
     goMode('levels');
@@ -1724,6 +1785,7 @@
   /* You win the level, so your coins go in the bank and you get your
      medals. This runs once, on the first frame of the clear screen. */
   function bankRun() {
+    if (customLevel) { return; }
     var idx = game.level;
     progress.coins += game.runCoins;
     var won = 0;
@@ -1746,6 +1808,14 @@
     if (game.mode === 'code') { return updateCodeScreen(); }
     if (game.mode === 'shop') { return updateShop(); }
     if (game.mode === 'worldclear') { return updateWorldClear(); }
+
+    if (customLevel && (game.mode === 'clear' || game.mode === 'gameover' || game.mode === 'win')) {
+      updateParticles();
+      updateToasts();
+      if (backEdge || escEdge) { returnToEditor(); }
+      else if (game.timer > 15 && (consumeConfirm() || tapPoint)) { restartCustom(); }
+      return;
+    }
 
     if (game.mode === 'dead') {
       updateParticles();
@@ -1992,6 +2062,7 @@
   }
 
   function startLevel(idx) {
+    if (customLevel) { restartCustom(); return; }
     game.level = idx;
     game.world = worldOf(idx);
     game.score = 0;
@@ -2008,6 +2079,7 @@
   }
 
   function openShop() {
+    if (customLevel) { return; }
     menu.shop = 0;
     menu.msg = '';
     menu.msgT = 0;
@@ -3172,7 +3244,7 @@
         it.taken = true;
         var isNew = markGem(game.level, it.slot);
         game.score += isNew ? 50 : 10;
-        toast(isNew ? 'GEM ' + gemCount(game.level) + '/3' : 'GEM AGAIN', '#7ad8c8');
+        toast(customLevel ? 'TEST GEM' : isNew ? 'GEM ' + gemCount(game.level) + '/3' : 'GEM AGAIN', '#7ad8c8');
         Sound.power();
         burst(it.x + 5, it.y + 5, '#7ad8c8', 16, 3.4);
       }
@@ -4101,7 +4173,7 @@
     ctx.fillRect(10, 23, 2, 3);
     text(String(game.score), 21, 26, 12, '#ffffff', 'left');
     var wname = WORLDS[worldOf(game.level)].name;
-    text(wname + '  ' + (worldOf(game.level) + 1) + '-' + (game.level - firstLevelOf(worldOf(game.level)) + 1) + '  ' + level.name,
+    text(customLevel ? 'TEST LEVEL: ' + level.name : wname + '  ' + (worldOf(game.level) + 1) + '-' + (game.level - firstLevelOf(worldOf(game.level)) + 1) + '  ' + level.name,
       VIEW_W / 2, 13, 10, 'rgba(255,255,255,0.75)');
 
     var bx = VIEW_W - 34;
@@ -4534,7 +4606,7 @@
     menuHits = [];
     text('PAUSED', 192, 51, 30, '#ffe19a');
     text('Your run is safe here.', 192, 78, 11, '#ffffff');
-    var labels = ['RESUME', 'RESTART LEVEL', 'WORLD MAP'];
+    var labels = ['RESUME', 'RESTART LEVEL', customLevel ? 'BACK TO EDITOR' : 'WORLD MAP'];
     for (var i = 0; i < labels.length; i++) {
       box(102, 98 + i * 36, 180, 30, menu.pause === i, false, '#d2bc7e');
       text(labels[i], 192, 113 + i * 36, 13, '#ffffff');
@@ -6521,6 +6593,7 @@
   }
 
   function render() {
+    if (game.mode === 'editor') { return; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
@@ -6589,12 +6662,13 @@
 
     if (game.mode === 'clear') {
       var lines = [
-        { t: 'LEVEL CLEAR', s: 30, c: '#ffd93d' },
+        { t: customLevel ? 'YOU MADE IT!' : 'LEVEL CLEAR', s: 30, c: '#ffd93d' },
         { t: 'Score ' + game.score + '    Coins ' + game.runCoins, s: 14 }
       ];
       if (game.wonMedals && game.wonMedals.length) {
         lines.push({ t: 'NEW MEDAL:  ' + game.wonMedals.join('  +  '), s: 13, c: '#7fd05f' });
       }
+      if (customLevel) { lines.push({ t: 'Edit level above, or tap to try again.', s: 12 }); }
       drawOverlayCentre(lines);
     } else if (game.mode === 'dead') {
       drawOverlayCentre([{ t: 'OUCH', s: 30, c: '#ff6b6b' }]);
@@ -6651,6 +6725,13 @@
     get weaponBoxes() { return weaponBoxes; },
     get hint() { return hint; },
     get shurikens() { return shurikens; },
+    get customPlaying() { return !!customLevel; },
+    openEditor: openEditor,
+    closeEditor: closeEditor,
+    playCustom: playCustom,
+    restartCustom: restartCustom,
+    returnToEditor: returnToEditor,
+    editorPalette: function (world) { return PALETTES[WORLDS[world].pal]; },
     hintTrail: hintTrail,
     worlds: WORLDS,
     weapons: WEAPONS,
@@ -6660,14 +6741,16 @@
     /* Jump straight to a level. NINJA.goTo(5) is the first boss.
        You can also say NINJA.goTo(1, 2) for world 2, level 3. */
     goTo: function (a, b) {
+      if (customLevel) { return; }
       var n = (b === undefined) ? a : firstLevelOf(a) + b;
       n = clamp(n, 0, LEVELS.length - 1);
       unlockUpTo(n);
       startLevel(n);
     },
     giveWeapon: function (k) { takeWeapon(k); },
-    unlockAll: function () { progress.max = LEVELS.length - 1; saveProgress(); },
+    unlockAll: function () { if (!customLevel) { progress.max = LEVELS.length - 1; saveProgress(); } },
     wipeSave: function () {
+      if (customLevel) { return; }
       progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
       game.best = 0;
       saveProgress();
@@ -6682,7 +6765,7 @@
     totalGems: totalGems,
     totalMedals: totalMedals,
     medalsOf: medalsOf,
-    giveCoins: function (n) { progress.coins += n | 0; saveProgress(); },
+    giveCoins: function (n) { if (!customLevel) { progress.coins += n | 0; saveProgress(); } },
     freeze: function (i, f) { return freezeEnemy(enemies[i], f === undefined ? 330 : f); },
     openShop: openShop
   };
