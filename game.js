@@ -96,10 +96,10 @@
         var AC = window.AudioContext || window.webkitAudioContext;
         if (AC) { this.ac = new AC(); }
       }
-      if (this.ac && this.ac.state === 'suspended') { this.ac.resume(); }
+      if (this.ac && this.ac.state === 'suspended' && !(game && game.mode === 'paused')) { this.ac.resume(); }
     },
     tone: function (freq, dur, type, vol, sweepTo) {
-      if (!this.on || !this.ac) { return; }
+      if (!this.on || !this.ac || (game && game.mode === 'paused')) { return; }
       var t = this.ac.currentTime;
       var osc = this.ac.createOscillator();
       var gain = this.ac.createGain();
@@ -131,6 +131,7 @@
     spring: function () { this.tone(240, 0.18, 'square', 0.1, 1100); },
     warp: function () { this.tone(900, 0.16, 'sine', 0.09, 180); },
     slam: function () { this.tone(90, 0.3, 'square', 0.15, 40); },
+    dig: function () { this.tone(130, 0.07, 'triangle', 0.07, 55); },
     menu: function () { this.tone(700, 0.05, 'square', 0.06); },
     deny: function () { this.tone(200, 0.16, 'square', 0.09, 120); },
     unlock: function () {
@@ -149,7 +150,9 @@
 
   /* ---------------- input ---------------- */
 
-  var input = { left: false, right: false, jumpHeld: false, throwHeld: false, up: false, down: false };
+  var input = { left: false, right: false, jumpHeld: false, throwHeld: false, digHeld: false, up: false, down: false };
+  var pauseEdge = false;
+  var digEdge = false;
   var jumpBuffer = 0;
   var throwEdge = false;
   var confirmEdge = false;
@@ -175,6 +178,25 @@
 
   window.addEventListener('keydown', function (e) {
     Sound.init();
+    if (e.code === 'KeyP' || e.code === 'Escape') {
+      e.preventDefault();
+      if (!e.repeat) {
+        if (game.mode === 'play' || game.mode === 'paused') { pauseEdge = true; }
+        else { backEdge = true; escEdge = true; }
+      }
+      return;
+    }
+    if (game.mode === 'paused') {
+      e.preventDefault();
+      if (e.repeat) { return; }
+      if (e.code === 'ArrowUp' || e.code === 'KeyW' || KEY_LEFT[e.code]) { navEdge = -1; }
+      else if (KEY_DOWN[e.code] || KEY_RIGHT[e.code]) { navEdge = 1; }
+      else if (e.code === 'Enter' || e.code === 'Space' || e.code === 'KeyZ') { confirmEdge = true; }
+      return;
+    }
+    if (e.code === 'KeyC') {
+      if (game.mode === 'play') { input.digHeld = true; digEdge = true; e.preventDefault(); return; }
+    }
     if (e.repeat) {
       if (KEY_LEFT[e.code] || KEY_RIGHT[e.code] || KEY_JUMP[e.code] || KEY_THROW[e.code]) { e.preventDefault(); }
       return;
@@ -197,6 +219,7 @@
   });
 
   window.addEventListener('keyup', function (e) {
+    if (e.code === 'KeyC') { input.digHeld = false; }
     if (KEY_UP[e.code]) { input.up = false; }
     if (KEY_DOWN[e.code]) { input.down = false; }
     if (KEY_LEFT[e.code]) { input.left = false; }
@@ -205,9 +228,20 @@
     else if (KEY_THROW[e.code]) { input.throwHeld = false; }
   });
 
-  window.addEventListener('blur', function () {
-    input.left = input.right = input.jumpHeld = input.throwHeld = false;
+  function releaseControls() {
+    input.left = input.right = input.jumpHeld = input.throwHeld = input.digHeld = false;
     input.up = input.down = false;
+    jumpBuffer = 0;
+    clearEdges();
+    document.querySelectorAll('.held').forEach(function (el) { el.classList.remove('held'); });
+  }
+
+  window.addEventListener('blur', function () {
+    if (game.mode === 'play') { setPaused(true); }
+    else { releaseControls(); }
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && game.mode === 'play') { setPaused(true); }
   });
 
   function bindHold(el, onDown, onUp) {
@@ -245,6 +279,10 @@
   bindHold(document.getElementById('btn-throw'),
     function () { input.throwHeld = true; throwEdge = true; confirmEdge = true; backEdge = true; },
     function () { input.throwHeld = false; });
+
+  bindHold(document.getElementById('btn-dig'),
+    function () { input.digHeld = true; digEdge = true; },
+    function () { input.digHeld = false; });
 
   /* Ladders need a down press, and a phone has no arrow keys. This button
      also moves the yellow box down a menu. */
@@ -296,9 +334,16 @@
   });
 
   var menuBtn = document.getElementById('btn-menu');
+  var pauseBtn = document.getElementById('btn-pause');
+  pauseBtn.addEventListener('click', function () {
+    if (game.mode === 'play' || game.mode === 'paused') { pauseEdge = true; }
+    pauseBtn.blur();
+  });
   if (menuBtn) {
     menuBtn.addEventListener('click', function () {
       Sound.init();
+      if (game.mode === 'play') { setPaused(true); return; }
+      if (game.mode === 'paused') { leaveLevel(); return; }
       escEdge = true;
       backEdge = true;
       menuBtn.blur();
@@ -336,6 +381,7 @@
     frame: 0,
     best: 0
   };
+  game.hitStop = 0;
 
   var START_HEARTS = 5;
   var HEART_CAP = 8;
@@ -609,7 +655,7 @@
 
   function isMenuMode() {
     return game.mode === 'title' || game.mode === 'worlds' || game.mode === 'levels' ||
-           game.mode === 'code' || game.mode === 'worldclear' || game.mode === 'shop';
+           game.mode === 'code' || game.mode === 'worldclear' || game.mode === 'shop' || game.mode === 'paused';
   }
 
   /* A fake wall '%' is NOT solid. It only looks like rock.
@@ -824,6 +870,9 @@
       pal: PALETTES[def.boss ? info.bossPal : info.pal],
       kind: def.kind || 'run'
     };
+    level.protected = NinjaTerrain.protection(rows, level.boss, level.kind);
+    level.damage = {};
+    game.hitStop = 0;
     /* 'seen' remembers which fake walls you have already walked into,
        so a secret you found stays easy to see. */
     level.seen = [];
@@ -920,6 +969,7 @@
       onGround: false, facing: 1,
       jumpsLeft: 2, coyote: 0, invuln: 0,
       throwCd: 0, animT: 0, dying: false,
+      digCd: 0, digT: 0,
       starT: 0, bootT: 0, rapidT: 0,
       /* new in V2 */
       weapon: 'star', ammo: -1,
@@ -945,6 +995,14 @@
      spikes and lava, and the tiles right beside it must be clear too,
      or the ninja lands and dies again straight away. */
   function spotIsSafe(x, y) {
+    var box = { x: x, y: y, w: player.w, h: player.h };
+    if (x < 0 || x + box.w > level.pxW || y < 0 || y + box.h > level.pxH) { return false; }
+    for (var by = Math.floor(y / TILE); by <= Math.floor((y + box.h - 1) / TILE); by++) {
+      for (var bx = Math.floor(x / TILE); bx <= Math.floor((x + box.w - 1) / TILE); bx++) {
+        if (isSolid(tileAt(bx, by))) { return false; }
+      }
+    }
+    if (!isSolid(tileAt(Math.floor((x + box.w / 2) / TILE), Math.floor((y + box.h + 1) / TILE)))) { return false; }
     if (touchesHazard({ x: x, y: y, w: player.w, h: player.h })) { return false; }
     var cx = Math.floor((x + player.w / 2) / TILE);
     var cy = Math.floor((y + player.h - 2) / TILE);
@@ -1119,6 +1177,7 @@
   /* ---------------- effects ---------------- */
 
   function burst(x, y, color, count, power) {
+    count = Math.min(count, 180 - particles.length);
     for (var i = 0; i < count; i++) {
       particles.push({
         x: x, y: y,
@@ -1208,6 +1267,39 @@
     }
   }
 
+  function canBreak(cx, cy) {
+    return NinjaTerrain.canBreak(level.grid, level.protected, cx, cy);
+  }
+
+  function chipBlock(cx, cy, force) {
+    if (!canBreak(cx, cy)) { return false; }
+    var key = cx + ':' + cy;
+    level.damage[key] = (level.damage[key] || 0) + force;
+    if (level.damage[key] >= (level.grid[cy][cx] === '/' ? 1 : 2)) { return breakBlock(cx, cy); }
+    burst(cx * TILE + 8, cy * TILE + 8, level.pal.rockTop, 4, 2);
+    Sound.dig();
+    return false;
+  }
+
+  function dig() {
+    var p = player;
+    if (p.digCd > 0) { return; }
+    p.digCd = 10;
+    p.digT = 8;
+    var dx = input.down || input.up ? 0 : p.facing;
+    var dy = input.down ? 1 : (input.up ? -1 : 0);
+    var cx = Math.floor((p.x + p.w / 2 + dx * 13) / TILE);
+    var cy = Math.floor((p.y + p.h / 2 + dy * 13) / TILE);
+    p.digX = cx * TILE + 8;
+    p.digY = cy * TILE + 8;
+    if (!chipBlock(cx, cy, 2)) {
+      burst(p.digX, p.digY, canBreak(cx, cy) ? level.pal.rockTop : '#cfd8e8', 3, 1.4);
+      Sound.dig();
+    }
+  }
+
+  function hitStop(frames) { game.hitStop = Math.max(game.hitStop, frames); }
+
   function makeShot(wk, x, y, vx, vy) {
     var W = WEAPONS[wk];
     var size = wk === 'rocket' ? 8 : (wk === 'bombs' ? 7 : (wk === 'laser' ? 10 : (wk === 'flame' ? 9 : 6)));
@@ -1258,9 +1350,9 @@
     return best;
   }
 
-  /* The round bang from a rocket or a bomb. It hurts everything close by
-     and it smashes cracked blocks. */
+  /* The round bang hurts nearby foes and carves unprotected earth. */
   function doBlast(x, y, radius, dmg) {
+    hitStop(5);
     blasts.push({ x: x, y: y, r: 4, max: radius, t: 0 });
     game.shake = Math.max(game.shake, 10);
     Sound.stomp();
@@ -1271,14 +1363,15 @@
       var dx = (e.x + e.w / 2) - x, dy = (e.y + e.h / 2) - y;
       if (dx * dx + dy * dy < radius * radius) { damageEnemy(e, dmg, 'blast'); }
     }
-    /* Break every cracked block inside the bang. */
+    /* Tile centres keep the hole round rather than clearing a square. */
     var c0 = Math.floor((x - radius) / TILE), c1 = Math.floor((x + radius) / TILE);
     var r0 = Math.floor((y - radius) / TILE), r1 = Math.floor((y + radius) / TILE);
     for (var cy = r0; cy <= r1; cy++) {
       if (cy < 0 || cy >= level.h) { continue; }
       for (var cx = c0; cx <= c1; cx++) {
         if (cx < 0 || cx >= level.w) { continue; }
-        if (level.grid[cy][cx] === '/') { breakBlock(cx, cy); }
+        var bx = cx * TILE + 8 - x, by = cy * TILE + 8 - y;
+        if (bx * bx + by * by <= (radius + 6) * (radius + 6)) { breakBlock(cx, cy); }
       }
     }
     /* The bang pushes the ninja too, but it never hurts you. */
@@ -1292,9 +1385,13 @@
   }
 
   function breakBlock(cx, cy) {
+    if (!canBreak(cx, cy)) { return false; }
     level.grid[cy][cx] = '.';
+    delete level.damage[cx + ':' + cy];
+    hint.dirty = true;
     burst(cx * TILE + 8, cy * TILE + 8, level.pal.rockTop, 10, 3);
-    Sound.bonk();
+    Sound.dig();
+    return true;
   }
 
   /* Picking up a weapon box. */
@@ -1317,6 +1414,7 @@
     player.vx = (player.x + 5 < fromX ? -1 : 1) * 3;
     player.vy = -3.6;
     game.shake = 10;
+    hitStop(4);
     Sound.hurt();
     burst(player.x + 5, player.y + 7, '#ff5a5a', 10, 3);
     if (game.hearts <= 0 && secondWind()) { return; }
@@ -1396,6 +1494,7 @@
     game.shake = 14;
     game.mode = 'dead';
     game.timer = 0;
+    syncControls();
     Sound.hurt();
     burst(player.x + 5, player.y + 7, '#ff9a3c', 16, 4);
   }
@@ -1403,10 +1502,12 @@
   function gameOver() {
     game.mode = 'gameover';
     game.timer = 0;
+    syncControls();
     Sound.lose();
   }
 
   function killEnemy(e) {
+    hitStop(e.kind === 'boss' ? 9 : 3);
     e.alive = false;
     if (e.kind === 'boss') {
       game.score += 100;
@@ -1465,6 +1566,7 @@
       }
     }
     e.hp -= n;
+    if (e.kind === 'boss' || n >= 2 || from === 'stomp') { hitStop(3); }
     e.hurt = 12;
     if (e.hp <= 0) { killEnemy(e); return true; }
     burst(e.x + e.w / 2, e.y + 6, '#ffffff', 6, 2);
@@ -1490,6 +1592,12 @@
   /* ---------------- update ---------------- */
 
   function update() {
+    if (pauseEdge && (game.mode === 'play' || game.mode === 'paused')) {
+      setPaused(game.mode === 'play');
+      return;
+    }
+    if (game.mode === 'paused') { updatePause(); clearEdges(); return; }
+    if (game.mode === 'play' && game.hitStop > 0) { game.hitStop--; return; }
     game.frame++;
     game.timer++;
     if (game.shake > 0) { game.shake--; }
@@ -1501,6 +1609,8 @@
   }
 
   function clearEdges() {
+    pauseEdge = false;
+    digEdge = false;
     throwEdge = false;
     confirmEdge = false;
     navEdge = 0;
@@ -1517,6 +1627,51 @@
     game.timer = 0;
     menuHits = [];
     clearEdges();
+    releaseControls();
+    syncControls();
+    if (m === 'worlds' || m === 'levels') { menu.walk = m === 'worlds' ? menu.world : menu.level; }
+    if (Sound.ac && Sound.ac.state === 'suspended' && m !== 'paused') { Sound.ac.resume(); }
+  }
+
+  function syncControls() {
+    var playing = game.mode === 'play';
+    document.body.classList.toggle('playing', playing);
+    pauseBtn.hidden = !playing && game.mode !== 'paused';
+    pauseBtn.textContent = game.mode === 'paused' ? 'RESUME' : 'PAUSE';
+    pauseBtn.setAttribute('aria-label', game.mode === 'paused' ? 'Resume game' : 'Pause game');
+    pauseBtn.setAttribute('aria-pressed', String(game.mode === 'paused'));
+  }
+
+  function setPaused(paused) {
+    if (paused ? game.mode !== 'play' : game.mode !== 'paused') { return; }
+    game.mode = paused ? 'paused' : 'play';
+    menu.pause = 0;
+    menuHits = [];
+    releaseControls();
+    syncControls();
+    /* No lost-tab catch-up, and no sound tails while the game is paused. */
+    acc = 0;
+    last = 0;
+    if (Sound.ac) {
+      if (paused && Sound.ac.state === 'running') { Sound.ac.suspend(); }
+      else if (!paused && Sound.ac.state === 'suspended') { Sound.ac.resume(); }
+    }
+  }
+
+  function leaveLevel() {
+    menu.world = worldOf(game.level);
+    menu.level = game.level - firstLevelOf(menu.world);
+    goMode('levels');
+  }
+
+  function updatePause() {
+    var h = tappedAction();
+    if (navEdge) { menu.pause = (menu.pause + navEdge + 3) % 3; }
+    if (h) { menu.pause = h.i; }
+    if (!h && !consumeConfirm()) { return; }
+    if (menu.pause === 0) { setPaused(false); }
+    else if (menu.pause === 1) { startLevel(game.level); }
+    else { leaveLevel(); }
   }
 
   /* You win the level, so your coins go in the bank and you get your
@@ -1610,12 +1765,9 @@
 
     /* ----- playing ----- */
 
-    /* Press Escape, or tap MENU, to leave a level and pick a new one. */
+    /* The menu never silently throws away a run. */
     if (escEdge) {
-      Sound.menu();
-      menu.world = worldOf(game.level);
-      menu.level = game.level - firstLevelOf(menu.world);
-      goMode('levels');
+      setPaused(true);
       return;
     }
 
@@ -1721,11 +1873,16 @@
   }
 
   function updateWorldSelect() {
+    walkMap(menu.world);
     wsFix();
     var n = wsCount();
     var h = tappedAction();
     if (h) {
-      if (h.act === 'world') { menu.world = h.i; menu.wsel = h.i; pickWorld(); }
+      if (h.act === 'world') {
+        if (menu.world === h.i) { pickWorld(); }
+        else { menu.world = h.i; menu.wsel = h.i; Sound.menu(); }
+      }
+      else if (h.act === 'explore') { pickWorld(); }
       else if (h.act === 'code') { menu.wsel = WORLDS.length; openCode(); }
       else if (h.act === 'shop') { menu.wsel = WORLDS.length + 1; openShop(); }
       else if (h.act === 'back') { Sound.menu(); goMode('title'); }
@@ -1760,9 +1917,14 @@
   }
 
   function updateLevelSelect() {
+    walkMap(menu.level);
     var h = tappedAction();
     if (h) {
-      if (h.act === 'level') { menu.level = h.i; pickLevel(); }
+      if (h.act === 'level') {
+        if (menu.level === h.i) { pickLevel(); }
+        else { menu.level = h.i; Sound.menu(); }
+      }
+      else if (h.act === 'play') { pickLevel(); }
       else if (h.act === 'back') { Sound.menu(); goMode('worlds'); }
       return;
     }
@@ -1894,6 +2056,9 @@
   function updatePlayer() {
     var p = player;
     p.animT++;
+    if (p.digCd > 0) { p.digCd--; }
+    if (p.digT > 0) { p.digT--; }
+    if (input.digHeld || digEdge) { dig(); }
     if (p.invuln > 0) { p.invuln--; }
     if (p.throwCd > 0) { p.throwCd--; }
     if (p.starT > 0) {
@@ -1928,7 +2093,7 @@
       p.jumpsLeft = maxJumps();
       p.wallDir = 0;
       p.wallSlide = 0;
-      if (throwEdge) { doThrow(); }
+      if (throwEdge || input.throwHeld) { doThrow(); }
       p.x += p.vx;
       resolveX(p);
       p.y += p.vy;
@@ -1979,7 +2144,7 @@
       doJump();
     }
     if (!input.jumpHeld && p.vy < -2) { p.vy += 0.35; }
-    if (throwEdge) { doThrow(); }
+    if (throwEdge || input.throwHeld) { doThrow(); }
 
     p.vy += GRAVITY;
     if (p.vy > MAX_FALL) { p.vy = MAX_FALL; }
@@ -2166,6 +2331,9 @@
       var e = enemies[i];
       if (!e.alive) { continue; }
       e.animT++;
+      if (e.kind === 'boss' && e.raged && game.frame % 6 === 0) {
+        burst(e.x + e.w / 2 + (Math.random() - 0.5) * e.w, e.y + e.h - e.artDy, '#ff5a4a', 1, 1.2);
+      }
       if (e.hurt > 0) { e.hurt--; }
       if (e.cd > 0) { e.cd--; }
       if (e.iceSlow > 0) { e.iceSlow--; }
@@ -2236,7 +2404,13 @@
 
     var target = e.homeY + Math.sin(e.animT * 0.045) * 16;
     var gap = Math.abs((player.x + 5) - (e.x + e.w / 2));
-    if (gap < 95) { target = clamp(player.y - 2, e.homeY - 34, e.homeY + 48); }
+    if (e.swoopT > 0) {
+      e.swoopT--;
+      target = clamp(player.y - 2, e.homeY - 34, e.homeY + 48);
+    } else if (attackReady(e, 'dive', e.cd <= 0 && gap < 95)) {
+      e.swoopT = 32;
+      e.cd = 100;
+    }
     e.vy = clamp(target - e.y, -1.5, 1.5);
     e.y += e.vy;
     resolveY(e);
@@ -2269,7 +2443,7 @@
       e.diveT--;
       e.vy = 3.4;
       e.vx = clamp(dx * 0.05, -1.6, 1.6);
-    } else if (e.cd <= 0 && Math.abs(dx) < 46 && dy > 10 && dy < 130) {
+    } else if (attackReady(e, 'dive', e.cd <= 0 && Math.abs(dx) < 46 && dy > 10 && dy < 130)) {
       e.diveT = 30;
       e.cd = 130;
       Sound.tone(300, 0.1, 'sawtooth', 0.05, 140);
@@ -2293,7 +2467,7 @@
     if (!e.onGround) { return; }
     e.vx *= 0.6;
     if (Math.abs(e.vx) < 0.1) { e.vx = 0; }
-    if (e.cd > 0) { return; }
+    if (!attackReady(e, 'hop', e.cd <= 0)) { return; }
     e.cd = 55 + Math.floor(Math.random() * 40);
     var dx = (player.x + 5) - (e.x + e.w / 2);
     var near = Math.abs(dx) < 130;
@@ -2307,7 +2481,7 @@
   function updateJumper(e) {
     e.vx = 0;
     e.dir = (player.x + 5) < (e.x + e.w / 2) ? -1 : 1;
-    if (e.onGround && e.cd <= 0) {
+    if (attackReady(e, 'hop', e.onGround && e.cd <= 0)) {
       e.cd = 78;
       e.vy = -6.4;
     }
@@ -2315,10 +2489,10 @@
 
   /* Some bad guys throw things at you. */
   function enemyShoot(e) {
-    if (!e.shot || e.cd > 0) { return; }
+    if (!e.shot) { return; }
     var dx = (player.x + 5) - (e.x + e.w / 2);
     var dy = (player.y + 7) - (e.y + e.h / 2);
-    if (Math.abs(dx) > e.range || Math.abs(dy) > 42) { return; }
+    if (!attackReady(e, 'shot', e.cd <= 0 && Math.abs(dx) <= e.range && Math.abs(dy) <= 42)) { return; }
     e.cd = e.rate;
     var sd = dx >= 0 ? 1 : -1;
     if (e.ai === 'walk') { e.dir = sd; }
@@ -2335,6 +2509,17 @@
   }
 
   /* ---------------- bosses ---------------- */
+
+  /* Each attack owns its wind-up, so a jump cannot hide a shot warning.
+     Frozen enemies and paused frames do not advance these counters. */
+  function attackReady(e, key, ready) {
+    if (!e.windups) { e.windups = {}; }
+    if (!ready) { delete e.windups[key]; return false; }
+    if (e.windups[key] === undefined) { e.windups[key] = 22; return false; }
+    if (e.windups[key] > 0) { e.windups[key]--; return false; }
+    delete e.windups[key];
+    return true;
+  }
 
   function bossRage(e) { return e.hp <= Math.ceil(e.maxHp / 2); }
 
@@ -2371,14 +2556,11 @@
     if (e.swoop > 0) { e.swoop--; }
     if (e.rageCd > 0) { e.rageCd--; }
 
-    if (bossRage(e) && !e.raged) {
+    if (attackReady(e, 'rage', bossRage(e) && (!e.raged || e.rageCd <= 0) && e.ghostT <= 0)) {
       e.raged = true;
       game.shake = 14;
       Sound.roar();
       toastAt(e.x + e.w / 2, e.y - 6, 'ANGRY NOW', '#ff4d4d');
-      rageBurst(e);
-      e.rageCd = 230;
-    } else if (e.raged && e.rageCd <= 0 && e.ghostT <= 0) {
       rageBurst(e);
       e.rageCd = 230;
     }
@@ -2448,7 +2630,7 @@
   function brainSkull(e) {
     var rage = bossRage(e);
     bossWalk(e, rage ? 0.95 : 0.55);
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 75 : 115;
       e.mouth = 24;
       for (var i = 0; i < (rage ? 3 : 2); i++) {
@@ -2457,7 +2639,7 @@
       }
       Sound.bonk();
     }
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = rage ? 130 : 200;
       e.vy = -7.4;
       game.shake = 4;
@@ -2469,7 +2651,7 @@
   function brainFrost(e) {
     var rage = bossRage(e);
     bossWalk(e, rage ? 0.72 : 0.44);
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 90 : 130;
       e.mouth = 20;
       for (var i = 0; i < (rage ? 3 : 2); i++) {
@@ -2478,7 +2660,7 @@
       }
       Sound.bonk();
     }
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = rage ? 150 : 235;
       e.vy = -6.2;
       e.vx = 0;
@@ -2505,7 +2687,7 @@
   function brainMummy(e) {
     var rage = bossRage(e);
     bossWalk(e, rage ? 0.62 : 0.38);
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 82 : 125;
       e.mouth = 20;
       if (e.phase % 2 === 0 && countMinions() < 3) {
@@ -2519,7 +2701,7 @@
       }
       e.phase++;
     }
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = 260;
       e.vy = -6.4;
       Sound.jump();
@@ -2556,7 +2738,7 @@
     var toward = px < (e.x + e.w / 2) ? -1 : 1;
     e.dir = toward;
 
-    if (e.jumpCd <= 0) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0)) {
       e.jumpCd = rage ? 210 : 300;
       e.swoop = 54;
       Sound.roar();
@@ -2580,7 +2762,7 @@
     e.vy = clamp(e.vy * 0.9, -2.1, 2.1);
     if (e.hurt > 8) { e.vx *= 0.4; e.vy *= 0.4; }
 
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 95 : 135;
       e.mouth = 26;
       for (var i = 0; i < (rage ? 3 : 2); i++) {
@@ -2596,7 +2778,7 @@
   function brainShadow(e) {
     var rage = bossRage(e);
     bossWalk(e, rage ? 1.15 : 0.75);
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 80 : 125;
       e.mouth = 18;
       for (var i = 0; i < (rage ? 3 : 2); i++) {
@@ -2605,13 +2787,13 @@
       }
       Sound.star();
     }
-    if (e.warpCd <= 0) {
+    if (attackReady(e, 'warp', e.warpCd <= 0)) {
       e.warpCd = rage ? 155 : 235;
       e.ghostT = 26;
       burst(e.x + 13, e.y + 15, '#b98cff', 26, 4);
       Sound.warp();
     }
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = 190;
       e.vy = -7.2;
       Sound.jump();
@@ -2626,7 +2808,7 @@
     var toward = px < (e.x + e.w / 2) ? -1 : 1;
     e.dir = toward;
 
-    if (e.jumpCd <= 0) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0)) {
       e.jumpCd = rage ? 190 : 265;
       e.swoop = 62;
       Sound.roar();
@@ -2652,7 +2834,7 @@
     e.vy = clamp(e.vy * 0.9, -2.2, 2.2);
     if (e.hurt > 8) { e.vx *= 0.4; e.vy *= 0.4; }
 
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 92 : 132;
       e.mouth = 22;
       /* Feathers fall straight down, so you can walk out of the way. */
@@ -2674,7 +2856,7 @@
 
     bossWalk(e, rage ? 0.85 : 0.55);
 
-    if (e.warpCd <= 0) {
+    if (attackReady(e, 'shield', e.warpCd <= 0)) {
       e.warpCd = rage ? 250 : 330;
       e.shieldT = rage ? 130 : 100;
       burst(e.x + e.w / 2, e.y + e.h / 2, '#ff8ad8', 18, 3.4);
@@ -2682,7 +2864,7 @@
       toastAt(e.x + e.w / 2, e.y - 6, 'SHIELD UP', '#ff8ad8');
     }
 
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 88 : 128;
       e.mouth = 20;
       /* Crystal shards spray out in a fan. */
@@ -2693,7 +2875,7 @@
       }
       Sound.star();
     }
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = rage ? 165 : 230;
       e.vy = -6.6;
       Sound.jump();
@@ -2709,7 +2891,7 @@
 
     bossWalk(e, rage ? 0.72 : 0.48);
 
-    if (e.jumpCd <= 0 && e.onGround) {
+    if (attackReady(e, 'jump', e.jumpCd <= 0 && e.onGround)) {
       e.jumpCd = rage ? 170 : 240;
       e.vy = -7.4;
       e.stampT = 1;
@@ -2728,7 +2910,7 @@
       burst(e.x + e.w / 2, e.y + e.h, '#ffab3d', 20, 4);
     }
 
-    if (e.cd <= 0) {
+    if (attackReady(e, 'shot', e.cd <= 0)) {
       e.cd = rage ? 96 : 140;
       e.mouth = 24;
       for (var i = 0; i < 3; i++) {
@@ -2831,9 +3013,9 @@
       var tile = tileAt(cx, cy);
       var hitWall = isSolid(tile);
 
-      if (hitWall && s.breaks && tile === '/') {
-        breakBlock(cx, cy);
-        hitWall = s.wk !== 'laser';
+      if (hitWall && !s.blast && canBreak(cx, cy) && s.wk !== 'ice' && s.wk !== 'flame') {
+        var broken = chipBlock(cx, cy, s.breaks ? 2 : 1);
+        hitWall = !(broken && s.wk === 'laser');
       }
 
       if (hitWall && s.arc) {
@@ -3045,6 +3227,29 @@
 
     drawHills(0.22, 214, pal.hillFar, 96, backdrop.hillFar);
     drawHills(0.46, 232, pal.hillNear, 74, backdrop.hillNear);
+    drawWorldScenery();
+  }
+
+  /* A small, fixed number of shapes, independent of level size. */
+  function drawWorldScenery() {
+    var w = game.world;
+    for (var i = 0; i < 9; i++) {
+      var x = ((i * 63 - cam.x * 0.32) % 570 + 570) % 570 - 65;
+      var y = 196 + (i % 3) * 9 - cam.y * 0.12;
+      ctx.save();
+      ctx.globalAlpha = 0.42;
+      drawLandmark(w, x, y, 0.9);
+      ctx.restore();
+    }
+    for (var a = 0; a < 20; a++) {
+      var t = game.frame * (w === 1 ? 0.3 : 0.16);
+      var ax = ((a * 71 + t + Math.sin(a * 9 + game.frame * 0.008) * 13 - cam.x * 0.18) % 410 + 410) % 410 - 10;
+      var ay = ((a * 43 + (w === 3 || w === 7 ? -t : t) - cam.y * 0.12) % 280 + 280) % 280;
+      ctx.globalAlpha = 0.35 + Math.sin(game.frame * 0.025 + a) * 0.2;
+      ctx.fillStyle = ['#b4d581', '#e6f7ff', '#f4cb83', '#ffba68', '#c7acee', '#ffffff', '#88dacb', '#ffc16b'][w];
+      ctx.fillRect(Math.floor(ax), Math.floor(ay), w === 1 ? 2 : 1, w === 0 ? 3 : 1);
+    }
+    ctx.globalAlpha = 1;
   }
 
   function drawHills(factor, baseY, color, step, arr) {
@@ -3094,6 +3299,22 @@
             /* Once you have been inside it, a soft sparkle shows the way. */
             ctx.fillStyle = 'rgba(255,217,61,0.30)';
             ctx.fillRect(x, y, TILE, TILE);
+          }
+          if (ch === '#') {
+            if (canBreak(cx, cy)) {
+              ctx.fillStyle = 'rgba(0,0,0,0.32)';
+              ctx.fillRect(x + 4, y + 6, 5, 1);
+              ctx.fillRect(x + 8, y + 7, 1, 4);
+            } else {
+              ctx.fillStyle = 'rgba(255,255,255,0.18)';
+              ctx.fillRect(x + 2, y + 12, 2, 2);
+              ctx.fillRect(x + 12, y + 12, 2, 2);
+            }
+            if (level.damage[cx + ':' + cy]) {
+              ctx.fillStyle = '#191b21';
+              ctx.fillRect(x + 6, y + 2, 2, 7);
+              ctx.fillRect(x + 8, y + 8, 4, 2);
+            }
           }
         } else if (ch === '=') {
           ctx.fillStyle = pal.plank;
@@ -3174,7 +3395,7 @@
           ctx.fillRect(x + 4, y + 3, 8, 2);
           ctx.fillRect(x + 4, y + 11, 8, 2);
         } else if (ch === '/') {
-          /* A cracked block. Only a big weapon can smash it. */
+          /* A cracked block breaks with one chip unless it is protected. */
           ctx.fillStyle = pal.rock;
           ctx.fillRect(x, y, TILE, TILE);
           ctx.fillStyle = 'rgba(255,255,255,0.10)';
@@ -4000,60 +4221,168 @@
     ctx.stroke();
   }
 
+  var WORLD_POINTS = [
+    { x: 49, y: 83 }, { x: 142, y: 76 }, { x: 235, y: 86 }, { x: 332, y: 78 },
+    { x: 332, y: 153 }, { x: 235, y: 160 }, { x: 142, y: 151 }, { x: 49, y: 157 }
+  ];
+  var LEVEL_POINTS = [
+    { x: 37, y: 128 }, { x: 97, y: 104 }, { x: 158, y: 139 },
+    { x: 219, y: 108 }, { x: 280, y: 135 }, { x: 342, y: 98 }
+  ];
+
+  function walkMap(target) {
+    if (typeof menu.walk !== 'number') { menu.walk = target; }
+    menu.walk += clamp(target - menu.walk, -0.12, 0.12);
+  }
+
+  function mapNinja(points) {
+    var pos = clamp(menu.walk || 0, 0, points.length - 1);
+    var i = Math.floor(pos), j = Math.min(i + 1, points.length - 1), f = pos - i;
+    var x = points[i].x + (points[j].x - points[i].x) * f;
+    var y = points[i].y + (points[j].y - points[i].y) * f;
+    drawNinja({
+      x: Math.round(x - 5), y: Math.round(y - 30 - Math.sin(f * Math.PI) * 3),
+      w: 10, h: 15, facing: 1, vx: f > 0 ? 1 : 0, vy: 0,
+      onGround: true, animT: game.frame, invuln: 0, starT: 0, bootT: 0,
+      wallSlide: 0, wallKickT: 0, onLadder: false, weapon: 'star'
+    });
+  }
+
+  function mapPath(points, done) {
+    ctx.lineWidth = 3;
+    ctx.setLineDash([3, 4]);
+    for (var i = 1; i < points.length; i++) {
+      ctx.strokeStyle = i <= done ? '#f5d985' : '#627e8c';
+      ctx.beginPath();
+      ctx.moveTo(points[i - 1].x, points[i - 1].y);
+      ctx.lineTo(points[i].x, points[i].y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+  }
+
+  function mapSea() {
+    ctx.fillStyle = '#122d40';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = '#315568';
+    for (var i = 0; i < 36; i++) {
+      var x = (i * 79 + Math.floor(game.frame / 18)) % 400 - 8;
+      var y = 52 + (i * 31) % 133;
+      ctx.fillRect(x, y, 6, 1);
+    }
+    text('N', 369, 43, 9, '#d4cba8');
+    ctx.strokeStyle = '#d4cba8';
+    ctx.beginPath(); ctx.moveTo(369, 49); ctx.lineTo(369, 61); ctx.stroke();
+  }
+
+  function mapIsland(x, y, w, h, color) {
+    ctx.fillStyle = '#091c2a';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 8, w + 3, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#a28c61';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x - w, y);
+    ctx.lineTo(x - w * 0.65, y - h * 0.8);
+    ctx.lineTo(x + w * 0.3, y - h);
+    ctx.lineTo(x + w, y - h * 0.2);
+    ctx.lineTo(x + w * 0.8, y + h * 0.65);
+    ctx.lineTo(x - w * 0.4, y + h * 0.85);
+    ctx.closePath(); ctx.fill();
+  }
+
+  function drawLandmark(w, x, y, scale) {
+    ctx.save();
+    ctx.translate(Math.round(x), Math.round(y));
+    ctx.scale(scale, scale);
+    var tint = WORLDS[w].tint;
+    ctx.fillStyle = tint;
+    if (w === 0) {
+      ctx.fillStyle = '#314a31'; ctx.fillRect(-2, -9, 4, 12);
+      ctx.fillStyle = '#6c9e52';
+      for (var i = 0; i < 3; i++) {
+        ctx.beginPath(); ctx.moveTo(0, -30 + i * 6); ctx.lineTo(12, -12 + i * 6); ctx.lineTo(-12, -12 + i * 6); ctx.fill();
+      }
+    } else if (w === 1 || w === 2 || w === 3) {
+      ctx.fillStyle = w === 1 ? '#658eac' : (w === 2 ? '#bb8b4c' : '#703b33');
+      ctx.beginPath(); ctx.moveTo(-21, 3); ctx.lineTo(-2, -31); ctx.lineTo(23, 3); ctx.fill();
+      ctx.fillStyle = tint;
+      ctx.beginPath(); ctx.moveTo(-11, -15); ctx.lineTo(-2, -31); ctx.lineTo(10, -15); ctx.lineTo(1, -20); ctx.fill();
+      if (w === 3) {
+        ctx.fillStyle = '#ffad49'; ctx.fillRect(-4, -24, 7, 5); ctx.fillRect(2, -19, 3, 14);
+        ctx.fillStyle = '#a37f78'; ctx.fillRect(-5, -40, 6, 5); ctx.fillRect(1, -46, 8, 4);
+      }
+    } else if (w === 4 || w === 7) {
+      ctx.fillStyle = w === 4 ? '#65547f' : '#77767b'; ctx.fillRect(-17, -19, 34, 22);
+      ctx.fillRect(-21, -28, 10, 31); ctx.fillRect(11, -28, 10, 31);
+      ctx.fillStyle = tint;
+      for (var j = 0; j < 3; j++) { ctx.fillRect(-13 + j * 11, -12, 4, 5); }
+      if (w === 7) {
+        ctx.fillStyle = '#b9a28e'; ctx.fillRect(12, -42, 5, 7); ctx.fillRect(18, -48, 8, 5);
+        ctx.fillStyle = '#c8a161'; ctx.fillRect(-17, -24, 34, 3);
+      } else {
+        ctx.fillStyle = tint; ctx.fillRect(-20, -34, 10, 4); ctx.fillRect(12, -34, 10, 4);
+      }
+    } else if (w === 5) {
+      ctx.fillStyle = '#dde5ee'; ctx.fillRect(-20, -4, 40, 5);
+      for (var c = 0; c < 3; c++) { ctx.fillRect(-16 + c * 13, -23, 5, 19); }
+      ctx.fillStyle = '#d9bd83';
+      ctx.beginPath(); ctx.moveTo(-24, -24); ctx.lineTo(0, -38); ctx.lineTo(24, -24); ctx.fill();
+    } else {
+      for (var k = 0; k < 3; k++) {
+        var cx = -13 + k * 12, top = -18 - (k % 2) * 13;
+        ctx.fillStyle = k === 1 ? '#ba95d7' : tint;
+        ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx + 7, top + 10); ctx.lineTo(cx + 4, 2); ctx.lineTo(cx - 6, -2); ctx.lineTo(cx - 7, top + 10); ctx.fill();
+        ctx.fillStyle = '#e2f4eb'; ctx.fillRect(cx, top + 5, 2, 8);
+      }
+    }
+    ctx.restore();
+  }
+
+  function mapButton(x, y, w, label, act, selected, locked) {
+    box(x, y, w, 28, selected, locked, '#d2bc7e');
+    text(label, x + w / 2, y + 14, 10, '#ffffff');
+    hit(x, y, w, 28, act, 0);
+  }
+
   function drawWorldSelect() {
     wsFix();
-    menuTop('PICK A WORLD', 'levels done: ' + Math.min(progress.max, LEVELS.length) + ' of ' + LEVELS.length);
     menuHits = [];
-    var cols = 4, rows = Math.ceil(WORLDS.length / cols);
-    var bw = 88, bh = 68, gap = 6;
-    var x0 = Math.round((VIEW_W - (cols * bw + (cols - 1) * gap)) / 2), y0 = 54;
-
+    mapSea();
+    text('WORLD MAP', 14, 19, 20, '#fff0bd', 'left');
+    text(Math.min(progress.max, LEVELS.length) + ' / 48 LEVELS CLEAR', 14, 37, 9, '#d0e3e5', 'left');
+    mapPath(WORLD_POINTS, Math.floor(progress.max / LEVELS_PER_WORLD));
     for (var i = 0; i < WORLDS.length; i++) {
-      var wd = WORLDS[i];
-      var col = i % cols, row = Math.floor(i / cols);
-      var x = x0 + col * (bw + gap);
-      var y = y0 + row * (bh + gap);
-      var open = worldUnlocked(i);
-      var on = menu.wsel === i;
-      box(x, y, bw, bh, on, !open, wd.tint);
-      hit(x, y, bw, bh, 'world', i);
-
-      if (!open) {
-        drawLock(x + bw / 2 - 5, y + 18);
-        text('LOCKED', x + bw / 2, y + 42, 9, 'rgba(255,255,255,0.45)');
-      } else {
-        var done = levelsDoneIn(i);
-        text(String(i + 1), x + 14, y + 26, 17, wd.tint);
-        for (var k = 0; k < LEVELS_PER_WORLD; k++) {
-          ctx.fillStyle = k < done ? '#7fd05f' : 'rgba(255,255,255,0.2)';
-          ctx.fillRect(x + 26 + k * 10, y + 16, 7, 5);
-        }
-        text(done + '/' + LEVELS_PER_WORLD, x + 48, y + 30, 9, 'rgba(255,255,255,0.7)');
-        var wg = worldGems(i);
-        if (wg > 0) {
-          text(wg + ' GEMS', x + bw / 2, y + 42, 8, 'rgba(122,216,200,0.9)');
-        }
+      var p = WORLD_POINTS[i], open = worldUnlocked(i), done = levelsDoneIn(i) === LEVELS_PER_WORLD;
+      mapIsland(p.x, p.y - 1, 35, 23, done ? '#517f58' : (open ? PALETTES[WORLDS[i].pal].rockTop : '#44515d'));
+      ctx.save();
+      ctx.globalAlpha = open ? 1 : 0.55;
+      drawLandmark(i, p.x + 8, p.y - 3, 0.73);
+      ctx.restore();
+      if (menu.world === i && menu.wsel < WORLDS.length) {
+        ctx.strokeStyle = '#ffe19a'; ctx.lineWidth = 2;
+        ctx.strokeRect(p.x - 36, p.y - 33, 73, 59); ctx.lineWidth = 1;
       }
-      var nm = wd.name.split(' ');
-      text(nm[0] + ' ' + (nm[1] || ''), x + bw / 2, y + 58, 9, open ? '#ffffff' : 'rgba(255,255,255,0.4)');
+      ctx.fillStyle = '#14232c'; ctx.fillRect(p.x - 29, p.y + 14, 58, 12);
+      text((i + 1) + ' ' + (done ? 'CLEAR' : (open ? levelsDoneIn(i) + '/6' : 'LOCKED')), p.x, p.y + 20, 8, open ? '#fff0bd' : '#ccd6df');
+      hit(p.x - 39, p.y - 35, 78, 63, 'world', i);
     }
-
-    var cy2 = y0 + rows * (bh + gap) + 4;
-    var cx = VIEW_W / 2 - 114;
-    box(cx, cy2, 110, 20, menu.wsel === WORLDS.length, false, '#b98cff');
-    hit(cx, cy2, 110, 20, 'code', 0);
-    text('I HAVE A CODE', cx + 55, cy2 + 14, 11, '#ffffff');
-
-    var sx = VIEW_W / 2 + 4;
-    box(sx, cy2, 110, 20, menu.wsel === WORLDS.length + 1, false, '#ffd93d');
-    hit(sx, cy2, 110, 20, 'shop', 0);
-    text('SHOP', sx + 40, cy2 + 14, 11, '#ffffff');
-    drawCoin(sx + 62, cy2 + 6);
-    text(String(coinsLeft()), sx + 72, cy2 + 14, 9, '#ffd93d', 'left');
-
-    text('ARROWS move to any button.  SPACE picks it.  Or tap.', VIEW_W / 2, cy2 + 34, 9, 'rgba(255,255,255,0.75)');
-    backBox();
-    menuFoot('', 'BEST ' + game.best);
+    mapNinja(WORLD_POINTS);
+    var wd = WORLDS[menu.world], isOpen = worldUnlocked(menu.world);
+    ctx.fillStyle = '#0b1c28'; ctx.fillRect(0, 193, VIEW_W, 79);
+    text(wd.name, 13, 206, 16, wd.tint, 'left');
+    text(isOpen ? worldGems(menu.world) + '/18 GEMS  |  ' + levelsDoneIn(menu.world) + '/6 CLEAR' : 'Clear the world before this one.', 13, 223, 9, '#d0e3e5', 'left');
+    mapButton(266, 199, 106, isOpen ? 'EXPLORE >' : 'LOCKED', 'explore', menu.wsel < WORLDS.length, !isOpen);
+    mapButton(10, 237, 54, 'BACK', 'back', false, false);
+    mapButton(71, 237, 100, 'WORLD CODE', 'code', menu.wsel === WORLDS.length, false);
+    mapButton(178, 237, 92, 'SHOP ' + coinsLeft(), 'shop', menu.wsel === WORLDS.length + 1, false);
+    text('SELECT + ENTER', 329, 252, 8, '#d0e3e5');
+    if (menu.msgT > 0) { text(menu.msg, 192, 185, 9, '#fff0bd'); }
   }
 
   /* A small gold coin, used on the menus. */
@@ -4085,70 +4414,61 @@
   }
 
   function drawLevelSelect() {
-    var wd = WORLDS[menu.world];
-    menuTop(wd.name, 'world ' + (menu.world + 1) + ' of ' + WORLDS.length);
+    var wd = WORLDS[menu.world], done = levelsDoneIn(menu.world);
     menuHits = [];
-    var cols = 3, rows = Math.ceil(LEVELS_PER_WORLD / cols);
-    var bw = 90, bh = 66, gap = 8;
-    var x0 = Math.round((VIEW_W - (cols * bw + (cols - 1) * gap)) / 2), y0 = 56;
-
-    for (var i = 0; i < LEVELS_PER_WORLD; i++) {
-      var idx = firstLevelOf(menu.world) + i;
-      var def = LEVELS[idx];
-      var open = levelUnlocked(idx);
-      var on = menu.level === i;
-      var col = i % cols, row = Math.floor(i / cols);
-      var x = x0 + col * (bw + gap);
-      var y = y0 + row * (bh + gap);
-      box(x, y, bw, bh, on, !open, wd.tint);
-      hit(x, y, bw, bh, 'level', i);
-
-      if (!open) {
-        drawLock(x + bw / 2 - 5, y + 22);
-      } else if (def && def.boss) {
-        text('BOSS', x + bw / 2, y + 22, 12, '#ff6b6b');
-        text(String(i + 1), x + bw / 2, y + 40, 15, '#ffffff');
-      } else {
-        text(String(i + 1), x + bw / 2, y + 32, 22, '#ffffff');
-        if (def && def.kind === 'maze') {
-          text('MAZE', x + bw / 2, y + 43, 8, '#b98cff');
-        }
-      }
-      if (open && idx < progress.max) {
-        ctx.fillStyle = '#7fd05f';
-        ctx.fillRect(x + bw - 12, y + 6, 6, 6);
-      }
-      if (open) {
-        /* Three little gems show what you still have to find. */
-        var got = gemCount(idx);
-        for (var g = 0; g < 3; g++) {
-          var gx = x + 8 + g * 9, gy = y + 10;
-          ctx.fillStyle = g < got ? '#7ad8c8' : 'rgba(255,255,255,0.18)';
-          ctx.beginPath();
-          ctx.moveTo(gx, gy - 4); ctx.lineTo(gx + 3, gy); ctx.lineTo(gx, gy + 4); ctx.lineTo(gx - 3, gy);
-          ctx.closePath(); ctx.fill();
-        }
-        /* Three little medals show the extra jobs you have done. */
-        var md = medalsOf(idx);
-        for (var m = 0; m < 3; m++) {
-          var mx = x + 10 + m * 9, my = y + bh - 15;
-          ctx.fillStyle = (md & (1 << m)) ? MEDAL_COLORS[m] : 'rgba(255,255,255,0.14)';
-          ctx.beginPath(); ctx.arc(mx, my, 3.2, 0, Math.PI * 2); ctx.fill();
-          if (md & (1 << m)) {
-            ctx.fillStyle = 'rgba(255,255,255,0.55)';
-            ctx.fillRect(mx - 2, my - 2, 1.6, 1.6);
-          }
-        }
-      }
-      text(def ? def.name : '?', x + bw / 2, y + 58, 8, open ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)');
+    mapSea();
+    text(wd.name, 14, 20, 22, wd.tint, 'left');
+    text('WORLD ' + (menu.world + 1) + '   |   ' + done + '/6 CLEAR   |   CODE: ' + wd.code, 14, 40, 9, '#d0e3e5', 'left');
+    mapIsland(191, 120, 182, 60, done === 6 ? '#426e4c' : PALETTES[wd.pal].rock);
+    for (var b = 0; b < 7; b++) {
+      ctx.save(); ctx.globalAlpha = 0.6;
+      drawLandmark(menu.world, 25 + b * 55, 87 + (b % 2) * 81, 0.8);
+      ctx.restore();
     }
+    mapPath(LEVEL_POINTS, done);
+    for (var i = 0; i < LEVELS_PER_WORLD; i++) {
+      var idx = firstLevelOf(menu.world) + i, def = LEVELS[idx], p = LEVEL_POINTS[i];
+      var open = levelUnlocked(idx), on = menu.level === i;
+      if (def.boss) {
+        ctx.fillStyle = '#302f40'; ctx.fillRect(p.x - 14, p.y - 23, 28, 26);
+        ctx.fillRect(p.x - 18, p.y - 29, 9, 32); ctx.fillRect(p.x + 9, p.y - 29, 9, 32);
+        ctx.fillStyle = '#e36a59'; ctx.fillRect(p.x - 7, p.y - 19, 14, 5);
+        text('BOSS', p.x, p.y - 35, 9, '#ffe3bc');
+      }
+      ctx.fillStyle = on ? '#ffe19a' : (idx < progress.max ? '#7fbf77' : (open ? '#e0d2ab' : '#65727e'));
+      ctx.beginPath(); ctx.arc(p.x, p.y, on ? 12 : 9, 0, Math.PI * 2); ctx.fill();
+      text(open ? String(i + 1) : '-', p.x, p.y, 11, '#102334');
+      hit(p.x - 24, p.y - 24, 48, 49, 'level', i);
+      for (var m = 0; m < 3; m++) {
+        ctx.fillStyle = medalsOf(idx) & (1 << m) ? MEDAL_COLORS[m] : '#263c45';
+        ctx.fillRect(p.x - 9 + m * 7, p.y + 17, 5, 4);
+      }
+      if (def.kind === 'maze') { text('MAZE', p.x, p.y + 31, 8, '#e1d4f7'); }
+    }
+    mapNinja(LEVEL_POINTS);
+    var selected = firstLevelOf(menu.world) + menu.level, defn = LEVELS[selected];
+    ctx.fillStyle = '#0b1c28'; ctx.fillRect(0, 194, VIEW_W, 78);
+    text(defn.name, 13, 207, 17, '#fff0bd', 'left');
+    text(gemCount(selected) + '/3 GEMS   |   ' + medalCount(selected) + '/3 MEDALS', 13, 225, 10, '#d0e3e5', 'left');
+    mapButton(270, 199, 102, levelUnlocked(selected) ? 'PLAY >' : 'LOCKED', 'play', true, !levelUnlocked(selected));
+    mapButton(10, 237, 80, 'WORLD MAP', 'back', false, false);
+    text('Choose a dot, then PLAY.  Arrows + Enter work too.', 236, 251, 9, '#d0e3e5');
+    if (menu.msgT > 0) { text(menu.msg, 192, 184, 9, '#fff0bd'); }
+  }
 
-    var fy = y0 + rows * (bh + gap) + 6;
-    text('ARROWS to pick.  SPACE to play.  Or tap.', VIEW_W / 2, fy, 9, 'rgba(255,255,255,0.75)');
-    text('CODE FOR THIS WORLD:  ' + wd.code, VIEW_W / 2, fy + 16, 11, wd.tint);
-    text('Type it in on the code screen on any device.', VIEW_W / 2, fy + 28, 9, 'rgba(255,255,255,0.6)');
-    backBox();
-    menuFoot('', 'BEST ' + game.best);
+  function drawPause() {
+    panel(0.82);
+    menuHits = [];
+    text('PAUSED', 192, 51, 30, '#ffe19a');
+    text('Your run is safe here.', 192, 78, 11, '#ffffff');
+    var labels = ['RESUME', 'RESTART LEVEL', 'WORLD MAP'];
+    for (var i = 0; i < labels.length; i++) {
+      box(102, 98 + i * 36, 180, 30, menu.pause === i, false, '#d2bc7e');
+      text(labels[i], 192, 113 + i * 36, 13, '#ffffff');
+      hit(102, 98 + i * 36, 180, 30, 'pause', i);
+    }
+    text('P / ESC to resume.  Arrows + Enter to choose.', 192, 222, 10, '#d0e3e5');
+    text('DIG: C or DIG.  Hold UP / DOWN to aim.', 192, 243, 10, '#ffe19a');
   }
 
   function drawCodeScreen() {
@@ -6052,6 +6372,14 @@
     if (e.kind !== 'boss') { drawEnemyPips(e); }
     if (e.shieldT > 0) { drawBossShield(e); }
     if (e.frozen > 0) { drawIceBlock(e); }
+    if (!(e.frozen > 0) && e.windups && Object.keys(e.windups).some(function (k) { return e.windups[k] > 0; })) {
+      var wx = e.x + e.w / 2, wy = e.y - (e.artDy || 0) - 17;
+      ctx.fillStyle = '#ffd93d';
+      ctx.beginPath();
+      ctx.moveTo(wx, wy - 9); ctx.lineTo(wx + 8, wy + 5); ctx.lineTo(wx - 8, wy + 5);
+      ctx.closePath(); ctx.fill();
+      text('!', wx, wy, 13, '#291a10');
+    }
   }
 
   /* A red glow round an angry boss in phase two. */
@@ -6063,9 +6391,6 @@
     ctx.fillStyle = '#ff2f2f';
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    if (game.frame % 6 === 0) {
-      burst(cx + (Math.random() - 0.5) * e.w, e.y + e.h - e.artDy, '#ff5a4a', 1, 1.2);
-    }
   }
 
   /* A frozen foe sits inside a block of ice. It flashes near the end so you
@@ -6137,7 +6462,7 @@
 
     ctx.save();
     var sx = 0, sy = 0;
-    if (game.shake > 0) {
+    if (game.shake > 0 && game.mode !== 'paused' && game.hitStop === 0) {
       sx = (Math.random() - 0.5) * game.shake;
       sy = (Math.random() - 0.5) * game.shake;
     }
@@ -6172,6 +6497,14 @@
     drawBones();
     drawShurikens();
     if (game.mode !== 'dead') { drawNinja(player); }
+    if (player.digT > 0) {
+      ctx.strokeStyle = '#ffd99a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(player.digX, player.digY, 6 + (8 - player.digT), -1.2, 1.2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
     drawBlasts();
     drawParticles();
     drawToasts();
@@ -6179,6 +6512,7 @@
     ctx.restore();
 
     drawHUD();
+    if (game.mode === 'paused') { drawPause(); }
 
     if (game.mode === 'clear') {
       var lines = [
@@ -6219,7 +6553,7 @@
     if (dt > 250) { dt = 250; }
     acc += dt;
     var guard = 0;
-    while (acc >= STEP && guard < 5) { update(); acc -= STEP; guard++; }
+    while (acc >= STEP && guard < 5) { acc -= STEP; update(); guard++; }
     if (acc > STEP * 5) { acc = 0; }
     render();
   }

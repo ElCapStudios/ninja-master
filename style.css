@@ -20,14 +20,15 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-top: 54px;
 }
 
 #game {
   display: block;
   /* Keep the picture the right shape: never wider than the screen,
      never taller than the screen. */
-  width: min(100%, calc(100vh * 384 / 272));
-  width: min(100%, calc(100dvh * 384 / 272));
+  width: min(100%, calc((100vh - 54px) * 384 / 272));
+  width: min(100%, calc((100dvh - 54px) * 384 / 272));
   height: auto;
   aspect-ratio: 384 / 272;
   image-rendering: pixelated;
@@ -84,6 +85,22 @@ html, body {
 
 .btn-jump  { background: rgba(60, 170, 90, 0.5);  font-size: 16px; }
 .btn-throw { background: rgba(200, 60, 60, 0.5);  font-size: 15px; }
+.btn-dig {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  width: 58px;
+  height: 58px;
+  background: rgba(146, 100, 43, 0.8);
+  font-size: 13px;
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 3px solid #ffd93d;
+  outline-offset: 3px;
+}
+
+[hidden] { display: none !important; }
 
 /* The ladder button sits low between left and right, and is smaller so
    three buttons still fit across a small phone. */
@@ -113,12 +130,19 @@ html, body {
   border-radius: 6px;
   font-size: 10px;
   letter-spacing: 0.5px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 5px 8px;
   cursor: pointer;
   touch-action: manipulation;
   text-decoration: none;
   line-height: 1.2;
   font-family: inherit;
+}
+
+@media (max-width: 520px) {
+  #topbar { gap: 3px; }
+  .tiny { font-size: 9px; padding: 4px 6px; }
 }
 
 a.tiny { color: #ffd93d; border-color: rgba(255, 217, 61, 0.55); }
@@ -131,6 +155,7 @@ a.tiny { color: #ffd93d; border-color: rgba(255, 217, 61, 0.55); }
 }
 
 body.touch #pad { display: block; }
+body:not(.playing) #pad { display: none; }
 
 /* On short wide screens (phone held sideways) keep the buttons clear of the art. */
 @media (max-height: 420px) {
@@ -139,22 +164,24 @@ body.touch #pad { display: block; }
   .btn-down { width: 48px; height: 48px; font-size: 15px; }
 }
 
-/* Five round buttons need room. Shrink them in two steps so they never
+/* The thumb buttons need room. Shrink them in two steps so they never
    sit on top of each other, right down to a small old phone. */
 @media (max-width: 520px) {
   .btn { width: 64px; height: 64px; font-size: 18px; }
   .btn-jump, .btn-throw { font-size: 12px; }
   .btn-down { width: 50px; height: 50px; font-size: 15px; }
   .pad-side { gap: 10px; }
+  .btn-dig { width: 48px; height: 48px; font-size: 11px; }
   .pad-left  { left: calc(10px + env(safe-area-inset-left)); }
   .pad-right { right: calc(10px + env(safe-area-inset-right)); }
 }
 
 @media (max-width: 380px) {
-  .btn { width: 56px; height: 56px; font-size: 16px; }
+  .btn { width: 48px; height: 48px; font-size: 16px; }
   .btn-jump, .btn-throw { font-size: 11px; }
   .btn-down { width: 44px; height: 44px; font-size: 13px; }
-  .pad-side { gap: 8px; }
+  .pad-side { gap: 5px; }
   .pad-left  { left: calc(6px + env(safe-area-inset-left)); }
   .pad-right { right: calc(6px + env(safe-area-inset-right)); }
+  .btn-down, .btn-dig { width: 44px; height: 44px; }
 }

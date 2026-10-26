@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const terrain = require('../terrain.js');
 
 const FILE = path.join(__dirname, '..', 'levels.js');
 
@@ -595,6 +596,27 @@ function checkOne(level, index) {
   const traps = solve.traps();
   if (traps.length) {
     say('has ' + traps.length + ' dead end spots, first few: ' + traps.slice(0, 6).join(' '));
+  }
+
+  /* Use the shipped protection rules, not a second version of them.
+     Try total excavation and three repeatable partial blast patterns. */
+  const mask = terrain.protection(rows, boss, kind);
+  for (let pattern = 0; pattern < 4; pattern++) {
+    const dug = toGrid(rows);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const noise = ((Math.imul(x + index * 41, 73856093) ^ Math.imul(y + 17, 19349663)) >>> 0) % 100;
+        if (terrain.canBreak(dug, mask, x, y) &&
+            (pattern === 0 || noise < pattern * 23)) { dug[y][x] = '.'; }
+      }
+    }
+    const result = analyse(dug.map(function (r) { return r.join(''); }));
+    if (!result || !result.ok) { say('dig pattern ' + pattern + ' cuts off the flag'); continue; }
+    const digTraps = result.traps();
+    if (digTraps.length) say('dig pattern ' + pattern + ' makes traps: ' + digTraps.slice(0, 6).join(' '));
+    gems.concat(findAll(grid, 'k')).forEach(function (it) {
+      if (!result.reachable(it.x, it.y)) say('dig pattern ' + pattern + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
+    });
   }
 
   if (kind === 'maze') {
