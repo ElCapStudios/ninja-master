@@ -7,6 +7,10 @@ const vm = require('node:vm');
 const { execFileSync } = require('node:child_process');
 const root = path.join(__dirname, '..');
 const ref = process.env.GAME_SOURCE_REF;
+const newHeadwear = {
+  'cat-ears': 'Cat ears', horns: 'Horns', viking: 'Viking helmet', centurion: 'Centurion helmet'
+};
+const allHeadwear = ['none', 'sprout', 'cap', 'crest', ...Object.keys(newHeadwear)];
 function source(file) {
   return ref ? execFileSync('git', ['show', ref + ':' + file], { cwd: root, encoding: 'utf8' }) :
     fs.readFileSync(path.join(root, file), 'utf8');
@@ -287,7 +291,7 @@ const tests = {
   },
   'every suit and headwear draws without changing movement or collision': function () {
     for (const suit of ['midnight', 'ocean', 'moss', 'plum', 'ember', 'ice']) {
-      for (const headwear of ['none', 'sprout', 'cap', 'crest']) {
+      for (const headwear of allHeadwear) {
         const g = arena(), control = arena();
         customizer(g); g.choose('suit', suit); g.choose('headwear', headwear); g.apply(); g.close(); g.key('Escape');
         for (const h of [g, control]) {
@@ -761,6 +765,76 @@ const tests = {
     }
   }
 };
+
+for (const [id, name] of Object.entries(newHeadwear)) {
+  tests[name + ' persists, draws in every ninja view and keeps Gold Ninja and its hitbox'] = function () {
+    for (const gold of [false, true]) {
+      const save = { v: 4, max: 19, best: 700, coins: 230, gems: { 0: 7 }, spentGems: 1,
+        buys: { ice: 1, gold: gold ? 1 : 0 }, medals: { 0: 5 } };
+      const g = customizer(game(save));
+      const progress = g.storage.get('ninjaMasterSaveV2');
+      g.previewDraws.length = 0;
+      g.choose('headwear', id);
+      assert.ok(g.node('customizer-preview').attributes['aria-label'].includes(name));
+      assert.equal(g.looks.current().headwear, 'none', 'choosing only changes the draft');
+      g.apply();
+      const stored = JSON.parse(g.storage.get('ninjaMasterLookV1'));
+      assert.deepEqual(stored, { v: 1, suit: 'midnight', headband: 'red', belt: 'red', headwear: id });
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), progress);
+      const restored = customizer(game(null, { storage: g.storage }));
+      assert.equal(restored.looks.current().headwear, id, 'reload accepts the new ID');
+      assert.ok(restored.node('customizer-preview').attributes['aria-label'].includes(name));
+
+      const palette = gold ? ['#d9a521', '#9c7212', '#fff3b0'] : ['#3b4570', '#2a3155', '#e8483a'];
+      const parts = g.looks.headwear(g.looks.current(), 0, 0, ...palette);
+      assert.ok(parts.length >= 4, 'headwear must have its own pixel art');
+      const shape = JSON.stringify(parts);
+      for (const other of allHeadwear.filter(value => value !== id)) {
+        const look = Object.assign({}, g.looks.current(), { headwear: other });
+        assert.notEqual(shape, JSON.stringify(g.looks.headwear(look, 0, 0, ...palette)), 'distinct from ' + other);
+      }
+      function checkDraw(log, dx, dy, view) {
+        for (const [x, y, w, h, color] of parts) {
+          assert.ok(log.some(d => d[0] === 'rect' && d[1] === color &&
+            d[2] === x + dx && d[3] === y + dy && d[4] === w && d[5] === h), view + ' missing headwear part');
+        }
+      }
+      checkDraw(g.previewDraws, 0, 0, 'preview');
+      g.close();
+      for (const mode of ['title', 'worlds', 'levels', 'play']) {
+        if (mode === 'play') { g.n.goTo(0); g.n.player.invuln = 0; }
+        else g.t.goMode(mode);
+        g.draws.length = 0;
+        g.t.render();
+        if (mode === 'title') { checkDraw(g.draws, 0, 0, mode); }
+        else {
+          const origin = g.draws.find((d, i, log) => d[0] === 'translate' &&
+            log[i + 1]?.[0] === 'scale' && log[i + 2]?.[0] === 'translate' &&
+            log[i + 2][1] === -d[1] && log[i + 2][2] === -d[2]);
+          assert.ok(origin, 'ninja scaling uses a foot origin');
+          checkDraw(g.draws, origin[1] - 6, origin[2] - 16, mode);
+        }
+      }
+      for (const facing of [-1, 1]) {
+        g.n.player.facing = facing;
+        const playerBefore = JSON.stringify(g.n.player);
+        g.t.drawNinja(g.n.player);
+        assert.equal(JSON.stringify(g.n.player), playerBefore);
+        assert.equal(g.n.player.w, 10); assert.equal(g.n.player.h, 15);
+      }
+      if (gold) {
+        for (const color of ['#d9a521', '#9c7212', '#f0cf6a', '#fff3b0']) {
+          assert.ok(g.draws.some(d => d[0] === 'rect' && d[1] === color), 'keeps gold colour ' + color);
+        }
+        assert.equal(g.n.owns('gold'), 1);
+        const coin = g.t.coins[0]; g.n.player.x = coin.x; g.n.player.y = coin.y;
+        const before = g.n.game.runCoins; g.t.updateCoins();
+        assert.equal(g.n.game.runCoins - before, 2, 'new headwear keeps double coins');
+      }
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), progress);
+    }
+  };
+}
 
 let failures = 0;
 console.log('Game source: ' + (ref || 'worktree') + ', Node ' + process.version);

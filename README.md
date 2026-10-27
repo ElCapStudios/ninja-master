@@ -171,6 +171,14 @@ Pick a suit colour, a headband colour, a belt colour and headwear.
 Each colour has a name. The preview shows the same ninja as the game.
 All these choices are free. They do not change moves, power or the hitbox.
 
+Headwear choices are **None**, **Sprout**, **Trail cap**, **Star crest**,
+**Cat ears**, **Horns**, **Viking helmet** and **Centurion helmet**.
+Cat ears have coloured inner ears. Horns curve up from the hood. The Viking
+helmet has wide horns and a centre strip. The Centurion helmet has a tall
+coloured plume. Ears, helmet shells and trim use your chosen colours, or
+Gold Ninja's colours if you own it. The horns keep their pale bone colour.
+All artwork is original pixel art.
+
 Choose **Apply look** to use and save the look. **Back** or Escape leaves
 without keeping changes you did not apply. **Default look** puts the old
 look in the preview; choose **Apply look** to keep it. A paused game stays
@@ -435,9 +443,21 @@ To check the look feature against the main commit before it was added:
 GAME_SOURCE_REF=0e51b35edbeb189e3f770d8a7269d2e4e54f53f3 node tools/checkgame.cjs
 ```
 
-The eight customizer checks must fail because that game has no customizer.
+The twelve customizer checks must fail because that game has no customizer.
 All other checks must pass. This uses the old game's script tags, so the
 failure is a missing feature assertion, not a missing script dependency.
+
+To check the four added headwear choices against the earlier customizer:
+
+```sh
+GAME_SOURCE_REF=758bebf1f12001efe3e66a579c22113905df9e81 node tools/checkgame.cjs
+```
+
+The four new headwear checks and the expanded movement check must fail
+with missing headwear options. The other 32 checks must pass. The current
+game passes all 37 checks, including all 48 suit/headwear combinations,
+save and reload for each new choice, matching preview and game art,
+and Gold Ninja's colours and double coins.
 
 The browser check needs Playwright with its Chromium and WebKit browsers
 already installed:

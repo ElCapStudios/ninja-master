@@ -6712,7 +6712,7 @@
     onClose: releaseControls,
     draw: function (c, look) {
       c.save();
-      c.translate(24, 24);
+      c.translate(24, 30);
       c.scale(3, 3);
       drawNinja({ x: 1, y: 1, vx: 0, facing: 1, onGround: true,
         animT: 0, invuln: 0, throwCd: 0 }, look, c);

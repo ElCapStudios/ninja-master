@@ -10,6 +10,9 @@ const output = process.env.BROWSER_CHECK_OUTPUT;
 const save = { v: 4, max: 19, best: 700, gems: { 0: 7, 2: 3 }, coins: 230,
   spentGems: 4, buys: { ice: 1, heart: 2 }, medals: { 0: 5 } };
 const lookKey = 'ninjaMasterLookV1';
+const newHeadwear = {
+  'cat-ears': 'Cat ears', horns: 'Horns', viking: 'Viking helmet', centurion: 'Centurion helmet'
+};
 const results = [];
 
 async function frames(page, count = 2) {
@@ -34,6 +37,107 @@ async function choose(page, key, value, touch = false) {
 
 async function screenshot(page, name) {
   if (output) await page.screenshot({ path: path.join(output, name + '.png') });
+}
+
+async function checkPreview(page) {
+  const preview = await page.locator('#customizer-preview').evaluate(el => {
+    const { data, width, height } = el.getContext('2d').getImageData(0, 0, el.width, el.height);
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3]) {
+        minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      }
+    }
+    return { minX, minY, maxX, maxY, width, height };
+  });
+  assert.ok(preview.minX > 0 && preview.minY > 0 && preview.maxX < preview.width - 1 &&
+    preview.maxY < preview.height - 1, 'preview must not crop headwear or feet: ' + JSON.stringify(preview));
+}
+
+async function checkNewHeadwear(page, engine, touch = false, gold = false) {
+  const before = await page.evaluate(() => localStorage.getItem('ninjaMasterSaveV2'));
+  const artwork = [];
+  const gameArt = [];
+  let previous = 'crest';
+  for (const [id, name] of Object.entries(newHeadwear)) {
+    if (!(await page.locator('#customizer').evaluate(el => el.open))) await open(page, touch);
+    if (touch) await choose(page, 'headwear', id, true);
+    if (!touch || page.viewportSize().width === 320) {
+      await page.locator('#customizer-headwear input[value="' + previous + '"]').focus();
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await page.locator('#customizer-headwear input[value="' + id + '"]').isChecked(), true,
+        'keyboard must select ' + name);
+    }
+    previous = id;
+    assert.ok((await page.locator('#customizer-preview').getAttribute('aria-label')).includes(name));
+    await checkPreview(page);
+    artwork.push(await page.locator('#customizer-preview').evaluate(el => el.toDataURL()));
+    if (touch) await page.locator('#customizer-apply').tap();
+    else { await page.locator('#customizer-apply').focus(); await page.keyboard.press('Enter'); }
+    assert.match(await page.locator('#customizer-status').textContent(), /applied and saved/);
+    if (!touch) await screenshot(page, engine + '-' + (gold ? 'gold-' : '') + id);
+    if (touch) await page.locator('#customizer-back').tap();
+    else await page.keyboard.press('Escape');
+    await page.reload(); await frames(page);
+    assert.equal(await page.evaluate(() => NinjaLooks.current().headwear), id);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('ninjaMasterLookV1')).v), 1);
+    assert.equal(await page.evaluate(() => localStorage.getItem('ninjaMasterSaveV2')), before);
+    assert.equal(await page.evaluate(() => NINJA.owns('gold')), gold ? 1 : 0);
+    if (!touch) {
+      await page.evaluate(() => {
+        NINJA.goTo(0);
+        Object.assign(NINJA.player, { x: 120, y: 100, vx: 0, vy: 0, invuln: 0, drawScaleX: 1, drawScaleY: 1 });
+      });
+      for (const facing of [-1, 1]) {
+        await page.evaluate(facing => { NINJA.player.facing = facing; }, facing);
+        await frames(page);
+        const sprite = await page.evaluate(() => {
+          const c = document.getElementById('game').getContext('2d');
+          const p = NINJA.player;
+          const x = Math.round(p.x) - 1 - Math.round(NINJA.cam.x);
+          const y = Math.round(p.y) - 1 - Math.round(NINJA.cam.y);
+          const eyes = (p.facing > 0 ? [5, 8] : [2, 5]).map(offset =>
+            Array.from(c.getImageData(x + offset, y + 4, 1, 1).data));
+          const crop = document.createElement('canvas');
+          crop.width = 28; crop.height = 32;
+          crop.getContext('2d').putImageData(c.getImageData(x - 9, y - 11, 28, 32), 0, 0);
+          return { eyes, image: crop.toDataURL(), w: p.w, h: p.h };
+        });
+        assert.deepEqual(sprite.eyes, [[255, 255, 255, 255], [255, 255, 255, 255]], name + ' must not hide either eye');
+        assert.equal(sprite.w, 10); assert.equal(sprite.h, 15);
+        gameArt.push({ name, facing, image: sprite.image });
+      }
+      await page.reload(); await frames(page);
+    }
+    if (gold) {
+      await open(page, touch);
+      assert.match(await page.locator('#customizer-preview').getAttribute('aria-label'), /Gold Ninja/);
+      assert.equal(await page.locator('#customizer-suit input:disabled, #customizer-headband input:disabled, #customizer-belt input:disabled').count(), 18);
+    }
+  }
+  assert.equal(new Set(artwork).size, 4, 'all four live previews must be distinct');
+  if (!touch && output) {
+    const gallery = await page.context().newPage();
+    await gallery.setContent('<html lang="en"><title>Headwear at game size</title><body style="margin:0;background:#0c101e"><canvas id="sheet" width="800" height="360"></canvas></body></html>');
+    await gallery.locator('#sheet').evaluate(async (canvas, sprites) => {
+      const c = canvas.getContext('2d');
+      c.imageSmoothingEnabled = false;
+      c.fillStyle = '#0c101e'; c.fillRect(0, 0, canvas.width, canvas.height);
+      c.font = 'bold 16px sans-serif'; c.fillStyle = '#ffd93d';
+      c.fillText('Actual game pixels: native size and 4x zoom, facing both ways', 16, 24);
+      for (let i = 0; i < sprites.length; i++) {
+        const sprite = sprites[i];
+        const image = new Image(); image.src = sprite.image; await image.decode();
+        const x = 16 + Math.floor(i / 2) * 196, y = 44 + (i % 2) * 156;
+        c.fillStyle = '#f4f4ef'; c.font = '14px sans-serif';
+        c.fillText(sprite.name, x, y + 14);
+        c.drawImage(image, x, y + 28);
+        c.drawImage(image, x + 40, y + 20, 112, 128);
+      }
+    }, gameArt);
+    await gallery.locator('#sheet').screenshot({ path: path.join(output, engine + '-' + (gold ? 'gold-' : '') + 'game-sprites.png') });
+    await gallery.close();
+  }
 }
 
 async function checkTargets(page, selector) {
@@ -92,18 +196,7 @@ async function desktop(browser, engine) {
   assert.deepEqual(focus, { width: '3px', style: 'solid' });
   await choose(page, 'headband', 'sky'); await choose(page, 'belt', 'sun'); await choose(page, 'headwear', 'crest');
   assert.match(await page.locator('#customizer-preview').getAttribute('aria-label'), /Ocean.*Sky.*Sun.*Star crest/);
-  const preview = await page.locator('#customizer-preview').evaluate(el => {
-    const { data, width, height } = el.getContext('2d').getImageData(0, 0, el.width, el.height);
-    let minX = width, minY = height, maxX = -1, maxY = -1;
-    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-      if (data[(y * width + x) * 4 + 3]) {
-        minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-      }
-    }
-    return { minX, minY, maxX, maxY, width, height };
-  });
-  assert.ok(preview.minX > 0 && preview.minY > 0 && preview.maxX < preview.width - 1 &&
-    preview.maxY < preview.height - 1, 'preview must not crop headwear or feet: ' + JSON.stringify(preview));
+  await checkPreview(page);
   await page.locator('#customizer-apply').focus(); await page.keyboard.press('Space');
   assert.match(await page.locator('#customizer-status').textContent(), /applied and saved/);
   await screenshot(page, engine + '-desktop');
@@ -126,6 +219,7 @@ async function desktop(browser, engine) {
   await page.locator('#customizer-apply').click(); await page.reload(); await frames(page);
   assert.equal(await page.evaluate(() => NinjaLooks.current().suit), 'midnight');
   assert.equal(await page.evaluate(() => NinjaLooks.current().headwear), 'none');
+  await checkNewHeadwear(page, engine);
 
   await page.evaluate(key => localStorage.setItem(key, '{bad'), lookKey);
   await page.reload(); await open(page);
@@ -149,6 +243,7 @@ async function desktop(browser, engine) {
   assert.match(await page.locator('#customizer-gold-note').textContent(), /coins still count double/);
   await choose(page, 'headwear', 'cap'); await page.locator('#customizer-apply').click();
   assert.match(await page.locator('#customizer-preview').getAttribute('aria-label'), /Gold Ninja.*Trail cap/);
+  await checkNewHeadwear(page, engine, false, true);
   await page.locator('#customizer-back').click();
   for (let i = 0; i < 48; i++) {
     await page.evaluate(i => { NINJA.goTo(i); NINJA.player.invuln = 9999; }, i);
@@ -157,7 +252,7 @@ async function desktop(browser, engine) {
   }
   assert.deepEqual(errors, []);
   await context.close();
-  results.push(engine + ': desktop keyboard, modal focus/return, named colours, full preview, apply/reload, discard/reset, bad save, storage failure, Gold Ninja and all 48 levels pass.');
+  results.push(engine + ': desktop keyboard, modal focus/return, named colours, all four new headwear IDs apply/reload with full distinct previews (normal and Gold Ninja), discard/reset, bad save, storage failure and all 48 levels pass.');
 }
 
 async function touch(browser, engine, viewport) {
@@ -191,6 +286,7 @@ async function touch(browser, engine, viewport) {
   await page.locator('#customizer-back').tap();
   await page.reload(); await frames(page);
   assert.equal(await page.evaluate(() => NinjaLooks.current().headwear), 'sprout');
+  await checkNewHeadwear(page, engine, true);
   const canvas = await page.locator('#game').boundingBox();
   await page.touchscreen.tap(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2); await frames(page);
   assert.equal(await page.evaluate(() => NINJA.game.mode), 'worlds');
@@ -226,7 +322,9 @@ async function touch(browser, engine, viewport) {
   assert.deepEqual(errors, []);
   await context.close();
   results.push(engine + ': touch ' + viewport.width + 'x' + viewport.height +
-    ', select/apply/reload, scroll, 44px targets, pause/customize/resume without input bleed, touch dig/jump and pointer-hold move pass.');
+    ', all four new headwear choices tap/apply/reload with full previews, ' +
+    (viewport.width === 320 ? 'small-screen keyboard selection, ' : '') +
+    'scroll, 44px targets, pause/customize/resume without input bleed, touch dig/jump and pointer-hold move pass.');
 }
 
 async function main() {

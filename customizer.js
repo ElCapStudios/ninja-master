@@ -23,7 +23,11 @@
     { id: 'none', name: 'None' },
     { id: 'sprout', name: 'Sprout' },
     { id: 'cap', name: 'Trail cap' },
-    { id: 'crest', name: 'Star crest' }
+    { id: 'crest', name: 'Star crest' },
+    { id: 'cat-ears', name: 'Cat ears' },
+    { id: 'horns', name: 'Horns' },
+    { id: 'viking', name: 'Viking helmet' },
+    { id: 'centurion', name: 'Centurion helmet' }
   ];
   var groups = { suit: suits, headband: trims, belt: trims, headwear: hats };
   var applied = copy(defaults), draft = copy(defaults);
@@ -190,6 +194,31 @@
     if (look.headwear === 'crest') {
       return [[x + 5, y - 6, 2, 7, band], [x + 2, y - 3, 8, 2, band],
         [x + 4, y - 4, 4, 4, band], [x + 5, y - 3, 2, 2, '#ffffff']];
+    }
+    if (look.headwear === 'cat-ears') {
+      return [[x + 1, y - 4, 1, 5, suit], [x + 2, y - 3, 1, 4, suit],
+        [x + 3, y - 2, 2, 3, suit], [x + 10, y - 4, 1, 5, suit],
+        [x + 9, y - 3, 1, 4, suit], [x + 7, y - 2, 2, 3, suit],
+        [x + 2, y - 1, 2, 2, band], [x + 8, y - 1, 2, 2, band]];
+    }
+    if (look.headwear === 'horns') {
+      return [[x + 1, y - 1, 3, 2, '#be9e72'], [x, y - 3, 2, 3, '#f4e3ba'],
+        [x - 1, y - 5, 1, 3, '#f4e3ba'], [x + 8, y - 1, 3, 2, '#be9e72'],
+        [x + 10, y - 3, 2, 3, '#f4e3ba'], [x + 12, y - 5, 1, 3, '#f4e3ba']];
+    }
+    if (look.headwear === 'viking') {
+      return [[x + 2, y - 3, 8, 4, suit], [x + 1, y - 1, 10, 2, suit],
+        [x + 2, y - 2, 2, 3, dark], [x + 1, y + 1, 10, 1, band],
+        [x + 5, y - 3, 2, 5, band],
+        [x, y - 2, 3, 2, '#be9e72'], [x - 2, y - 4, 3, 2, '#f4e3ba'],
+        [x - 2, y - 6, 1, 3, '#f4e3ba'], [x + 9, y - 2, 3, 2, '#be9e72'],
+        [x + 11, y - 4, 3, 2, '#f4e3ba'], [x + 13, y - 6, 1, 3, '#f4e3ba']];
+    }
+    if (look.headwear === 'centurion') {
+      return [[x + 2, y - 2, 8, 4, suit], [x + 1, y + 1, 10, 1, band],
+        [x, y + 2, 1, 4, suit], [x + 11, y + 2, 1, 4, suit],
+        [x + 5, y - 4, 2, 5, dark], [x + 3, y - 8, 6, 3, band],
+        [x + 2, y - 7, 2, 3, band], [x + 8, y - 7, 2, 3, band]];
     }
     return [];
   }
