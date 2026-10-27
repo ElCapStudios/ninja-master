@@ -9,7 +9,7 @@ const out = process.env.EDITOR_ARTIFACTS || fs.mkdtempSync(path.join(os.tmpdir()
 fs.mkdirSync(out, { recursive: true });
 const url = pathToFileURL(path.resolve(__dirname, '../index.html')).href;
 const save = { v: 4, max: 19, best: 700, gems: { 0: 7 }, coins: 230, spentGems: 0, buys: { ice: 1 }, medals: { 0: 5 } };
-const results = [];
+const results = [], jumpResults = [];
 
 async function frames(page, count = 3) {
   await page.evaluate(async count => {
@@ -32,6 +32,113 @@ async function button(page, id, touch) {
   if (touch) await page.locator('#' + id).tap();
   else await page.locator('#' + id).click();
   await frames(page);
+}
+async function assertJump(page, touch) {
+  await page.evaluate(touch => {
+    function state() {
+      const p = NINJA.player;
+      return {
+        frame: NINJA.game.frame, timer: NINJA.game.timer, mode: NINJA.game.mode, hitStop: NINJA.game.hitStop,
+        player: { x: p.x, y: p.y, vy: p.vy, onGround: p.onGround, jumpsLeft: p.jumpsLeft, dying: p.dying },
+        input: { ...NINJA.input }, active: document.activeElement.id,
+        focus: document.hasFocus(), visibility: document.visibilityState
+      };
+    }
+    const proof = { before: state(), inputEvent: null, ascent: null, samples: [], done: false, reason: null };
+    let raf, timer;
+    function finish(reason) {
+      if (proof.done) return;
+      proof.done = true; proof.reason = reason;
+      cancelAnimationFrame(raf); clearTimeout(timer);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('pointerdown', onInput, true);
+    }
+    function onInput(e) {
+      const matches = touch ? e.type === 'pointerdown' && e.target instanceof Element && e.target.closest('#btn-jump') :
+        e.type === 'keydown' && e.code === 'KeyZ';
+      if (matches && !proof.inputEvent) {
+        proof.inputEvent = { type: e.type, code: e.code, pointerType: e.pointerType, state: state() };
+      }
+    }
+    // Record before input: one browser frame can run up to five play ticks.
+    function record() {
+      if (proof.done) return;
+      const sample = state(), start = proof.inputEvent && proof.inputEvent.state;
+      proof.samples.push(sample);
+      if (proof.samples.length > 24) proof.samples.shift();
+      if (start && sample.frame > start.frame) {
+        if (sample.mode === 'play' && sample.player.vy < 0 && sample.player.y < start.player.y &&
+            sample.player.jumpsLeft < start.player.jumpsLeft) {
+          proof.ascent = sample; finish('ascent'); return;
+        }
+        if (sample.frame - start.frame >= 12) { finish('no-ascent'); return; }
+      }
+      raf = requestAnimationFrame(record);
+    }
+    window.jumpCheck = { proof, stop: finish };
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('pointerdown', onInput, true);
+    raf = requestAnimationFrame(record);
+    timer = setTimeout(() => finish('timeout'), 2000);
+  }, touch);
+  try {
+    if (touch) await page.locator('#btn-jump').tap();
+    else await page.keyboard.press('KeyZ');
+    await page.waitForFunction(() => window.jumpCheck.proof.done, null, { polling: 25, timeout: 3000 });
+    const proof = await page.evaluate(() => window.jumpCheck.proof);
+    const start = proof.inputEvent && proof.inputEvent.state, ascent = proof.ascent;
+    assert.ok(start && ascent && ascent.player.vy < 0 && ascent.player.y < start.player.y &&
+      ascent.player.jumpsLeft < start.player.jumpsLeft,
+    'Real ' + (touch ? 'touch' : 'keyboard') + ' jump failed: ' + JSON.stringify(proof));
+    return proof;
+  } finally { await page.evaluate(() => window.jumpCheck.stop('cancelled')); }
+}
+async function checkJumpPacing(browser, engine) {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    const touch = viewport.width !== 1280;
+    const context = await browser.newContext({ viewport, hasTouch: touch, isMobile: touch });
+    try {
+      await context.addInitScript(() => {
+        const raf = window.requestAnimationFrame.bind(window);
+        window.requestAnimationFrame = callback => {
+          const due = performance.now() + 100;
+          function paced(time) { if (time < due) raf(paced); else callback(time); }
+          return raf(paced);
+        };
+        window.blockJumpInput = false;
+        function block(e) {
+          if (window.blockJumpInput && (e.code === 'KeyZ' || e.target.closest('#btn-jump'))) {
+            e.stopImmediatePropagation();
+          }
+        }
+        document.addEventListener('keydown', block, true);
+        document.addEventListener('pointerdown', block, true);
+      });
+      const page = await context.newPage();
+      await page.goto(url);
+      await button(page, 'btn-editor', touch);
+      await button(page, 'editor-test', touch);
+      await page.waitForFunction(() => NINJA.game.mode === 'play' && NINJA.game.timer >= 3);
+      const proof = await assertJump(page, touch);
+      await frames(page, 6);
+      const late = await page.evaluate(() => ({ frame: NINJA.game.frame, vy: NINJA.player.vy }));
+      assert.ok(late.vy >= 0, 'slow-frame control reaches falling or landed state after the real jump');
+      await page.evaluate(() => { window.blockJumpInput = true; });
+      let blocked;
+      await assert.rejects(() => assertJump(page, touch), e => {
+        blocked = e.message;
+        return e instanceof assert.AssertionError && /Real .* jump failed/.test(e.message) &&
+          e.message.includes('"reason":"no-ascent"') && e.message.includes('"inputEvent":{');
+      }, 'the jump check must reject a real event blocked before the game receives it');
+      await page.evaluate(() => { window.blockJumpInput = false; });
+      await button(page, 'custom-retry', touch);
+      await page.waitForFunction(() => NINJA.game.mode === 'play');
+      const restored = await assertJump(page, touch);
+      jumpResults.push({ engine, viewport, touch, proof, late, blocked, restored });
+      results.push(engine + ' ' + viewport.width + 'x' + viewport.height +
+        ': 100ms render pacing records real jump ascent, rejects blocked input, and passes after input is restored.');
+    } finally { await context.close(); }
+  }
 }
 async function paint(page, tile, x, y, touch) {
   const b = page.locator('#editor-palette button').filter({ has: page.locator('[aria-hidden="true"]', { hasText: tile }) });
@@ -65,6 +172,8 @@ async function pauseChoice(page, i, touch) {
 async function run(engine) {
   const browser = await playwright[engine].launch({ headless: true });
   try {
+    await checkJumpPacing(browser, engine);
+    if (process.argv.includes('--jump-only')) return;
     for (const viewport of [
       { width: 1280, height: 900 }, { width: 768, height: 1024 }, { width: 1024, height: 768 },
       { width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }
@@ -102,12 +211,7 @@ async function run(engine) {
       assert.equal(await page.evaluate(() => NINJA.customPlaying), true);
       assert.equal(await page.evaluate(() => NINJA.level.world), 1);
       assert.equal(await page.evaluate(() => NINJA.weaponBoxes[0].kind), 'laser');
-      if (touch) {
-        await button(page, 'btn-jump', true);
-      } else {
-        await page.keyboard.press('KeyZ'); await frames(page);
-      }
-      assert.ok(await page.evaluate(() => NINJA.player.vy < 0));
+      await assertJump(page, touch);
       await page.evaluate(() => { NINJA.level.grid[14][6] = '.'; });
       await button(page, 'custom-retry', touch);
       await page.waitForFunction(() => NINJA.game.mode === 'play');
@@ -322,5 +426,6 @@ async function run(engine) {
 (async function () {
   for (const engine of ['chromium', 'webkit']) await run(engine);
   fs.writeFileSync(path.join(out, 'editor-browser-results.json'), JSON.stringify({ url, results }, null, 2) + '\n');
+  fs.writeFileSync(path.join(out, 'editor-jump-results.json'), JSON.stringify(jumpResults, null, 2) + '\n');
   console.log(results.join('\n') + '\nArtifacts: ' + out);
 })().catch(e => { console.error(e); process.exitCode = 1; });

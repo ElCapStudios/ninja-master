@@ -653,6 +653,14 @@ result JSON go. The check runs desktop and five touch screen sizes in both
 browsers, using `file://index.html`. Playwright is a test tool, not a game
 dependency. It also checks the actual hazard sprite pixels in the editor,
 shots from keyboard and touch, visible fall timing, chains, retry and reload.
+Jump checks record real input and the first upward motion, including a spent
+jump. They also run with 100ms render frames and reject blocked keyboard and
+touch input. Failure output includes play ticks, player and input state,
+focus and visibility. To run only these jump controls in both browsers:
+
+```sh
+node tools/checkeditor-browser.cjs --jump-only
+```
 
 ## Handy tricks for testing
 
@@ -685,9 +693,10 @@ NINJA.menuHits             // every tap box on the menu you are looking at
 NINJA.menu                 // menu.wsel is the cursor on the world screen
 ```
 
-To see the game loop run at full speed in a headless browser you must replace
-`requestAnimationFrame` with `setTimeout`. A headless browser only draws about
-2 frames a second, so every timing test is wrong without it.
+Browser frame rates vary. One render frame can run up to five 60Hz play
+ticks, so a fixed count of render frames is not a fixed count of play ticks.
+Observe short actions before sending input, rather than checking velocity
+after a fixed wait. Keep real browser timing for warning-duration checks.
 
 ## Run it on your own computer
 
