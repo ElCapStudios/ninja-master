@@ -11,7 +11,7 @@
       return rows[y][x];
     }
     function solidCh(c, key) {
-      return c === '#' || c === '=' || c === 'T' || c === '/' || (c === '+' && !key);
+      return c === '#' || c === '=' || c === 'T' || c === '/' || c === 'v' || (c === '+' && !key);
     }
     function solid(x, y, key) { return solidCh(at(x, y), key); }
     function free(x, y, key) {

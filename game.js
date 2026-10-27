@@ -669,7 +669,7 @@
 
   /* A fake wall '%' is NOT solid. It only looks like rock.
      A door '+' is solid until you use a key on it. */
-  function isSolid(ch) { return ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '+'; }
+  function isSolid(ch) { return NinjaTerrain.solid(ch); }
 
   function tileAt(cx, cy) {
     if (cx < 0 || cx >= level.w) { return '#'; }
@@ -703,7 +703,7 @@
   /* A tile the arrow trail is allowed to go through. Walls, spikes, lava,
      a shut door and a secret wall all stop it. */
   function hintOpen(ch, haveKey) {
-    if (ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '%') { return false; }
+    if (ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '%' || ch === 'v') { return false; }
     if (ch === '+' && !haveKey) { return false; }
     if (ch === '^' || ch === '~') { return false; }
     return true;
@@ -880,7 +880,7 @@
       kind: def.kind || 'run'
     };
     level.protected = NinjaTerrain.protection(rows, level.boss, level.kind);
-    hazards = NinjaHazards.create(rows);
+    hazards = NinjaHazards.create(rows, level.protected);
     level.damage = {};
     game.hitStop = 0;
     /* 'seen' remembers which fake walls you have already walked into,
@@ -1009,6 +1009,7 @@
      or the ninja lands and dies again straight away. */
   function spotIsSafe(x, y) {
     var box = { x: x, y: y, w: player.w, h: player.h };
+    if (NinjaHazards.threatens(hazards, box)) { return false; }
     if (x < 0 || x + box.w > level.pxW || y < 0 || y + box.h > level.pxH) { return false; }
     for (var by = Math.floor(y / TILE); by <= Math.floor((y + box.h - 1) / TILE); by++) {
       for (var bx = Math.floor(x / TILE); bx <= Math.floor((x + box.w - 1) / TILE); bx++) {
@@ -1029,6 +1030,7 @@
   }
 
   function respawnAtSafeSpot() {
+    NinjaHazards.reset(hazards);
     if (!spotIsSafe(safeSpot.x, safeSpot.y)) { safeSpot.x = spawn.x; safeSpot.y = spawn.y; }
     player.x = safeSpot.x;
     player.y = safeSpot.y;
@@ -1891,6 +1893,7 @@
     }
 
     NinjaHazards.tick(hazards, doBlast);
+    if (NinjaHazards.fall(hazards, level.grid, hitByBlock, crumbleBlock)) { hint.dirty = true; }
     updatePlayer();
     updateEnemies();
     updateShurikens();
@@ -3413,27 +3416,71 @@
     ctx.fillRect(0, baseY, VIEW_W, VIEW_H - baseY);
   }
 
-  function drawBarrel(x, y, fuse) {
+  function hitByBlock(box) {
+    var contact = false;
+    for (var i = 0; i < enemies.length; i++) {
+      var e = enemies[i];
+      if (e.alive && overlap(box, e)) { damageEnemy(e, 2, 'blast'); contact = true; }
+    }
+    if (!player.dying && overlap(box, player)) {
+      player.vy = Math.min(player.vy, -2.8);
+      contact = true;
+    }
+    return contact;
+  }
+
+  function crumbleBlock(b) {
+    hint.dirty = true;
+    burst(b.x + 8, b.y + 12, '#e7c68c', 10, 2.4);
+    Sound.dig();
+  }
+
+  function drawFallingBlock(x, y, warning, anchored, pen) {
+    pen = pen || ctx;
+    var shake = warning > 0 ? (Math.floor(warning / 4) % 3 - 1) : 0;
+    x += shake;
+    pen.fillStyle = '#05060d'; pen.fillRect(x, y, 16, 16);
+    pen.fillStyle = warning > 0 && Math.floor(warning / 8) % 2 === 0 ? '#fff3b0' : '#ac8d61';
+    pen.fillRect(x + 1, y + 1, 14, 14);
+    pen.fillStyle = '#e7c68c'; pen.fillRect(x + 1, y + 1, 14, 2);
+    pen.fillStyle = '#3e332f';
+    pen.fillRect(x + 7, y + 4, 2, 5);
+    pen.fillRect(x + 5, y + 7, 6, 2);
+    pen.fillRect(x + 6, y + 9, 4, 1);
+    pen.fillRect(x + 7, y + 10, 2, 1);
+    if (anchored) {
+      pen.fillStyle = '#e6e9e9';
+      pen.fillRect(x + 2, y + 12, 2, 2); pen.fillRect(x + 12, y + 12, 2, 2);
+    }
+    if (warning > 0) {
+      pen.fillStyle = '#ffd93d';
+      pen.fillRect(x + 2, y + 18, 2, 2); pen.fillRect(x + 12, y + 20, 2, 2);
+      pen.fillRect(x + 7, y - 6, 2, 3); pen.fillRect(x + 7, y - 2, 2, 1);
+    }
+  }
+
+  function drawBarrel(x, y, fuse, pen) {
+    pen = pen || ctx;
     var flash = fuse >= 0 && Math.floor(fuse / 6) % 2 === 0;
-    ctx.fillStyle = '#05060d';
-    ctx.fillRect(x, y + 1, 12, 13);
-    ctx.fillStyle = flash ? '#fff3b0' : '#c85836';
-    ctx.fillRect(x + 1, y + 2, 10, 11);
-    ctx.fillStyle = '#f39958';
-    ctx.fillRect(x + 2, y + 2, 2, 10);
-    ctx.fillStyle = '#d6c6a2';
-    ctx.fillRect(x, y + 2, 12, 2);
-    ctx.fillRect(x, y + 11, 12, 2);
-    ctx.fillStyle = '#ffd93d';
-    ctx.fillRect(x + 4, y + 5, 5, 5);
-    ctx.fillStyle = '#291b21';
-    ctx.fillRect(x + 6, y + 5, 1, 3);
-    ctx.fillRect(x + 6, y + 9, 1, 1);
+    pen.fillStyle = '#05060d';
+    pen.fillRect(x, y + 1, 12, 13);
+    pen.fillStyle = flash ? '#fff3b0' : '#c85836';
+    pen.fillRect(x + 1, y + 2, 10, 11);
+    pen.fillStyle = '#f39958';
+    pen.fillRect(x + 2, y + 2, 2, 10);
+    pen.fillStyle = '#d6c6a2';
+    pen.fillRect(x, y + 2, 12, 2);
+    pen.fillRect(x, y + 11, 12, 2);
+    pen.fillStyle = '#ffd93d';
+    pen.fillRect(x + 4, y + 5, 5, 5);
+    pen.fillStyle = '#291b21';
+    pen.fillRect(x + 6, y + 5, 1, 3);
+    pen.fillRect(x + 6, y + 9, 1, 1);
     if (fuse >= 0) {
-      ctx.fillStyle = '#ffd93d';
-      ctx.fillRect(x + 5, y - 4, 2, 3);
-      ctx.fillStyle = '#fff3b0';
-      ctx.fillRect(x + 3, y - 3, 6, 1);
+      pen.fillStyle = '#ffd93d';
+      pen.fillRect(x + 5, y - 4, 2, 3);
+      pen.fillStyle = '#fff3b0';
+      pen.fillRect(x + 3, y - 3, 6, 1);
     }
   }
 
@@ -3441,6 +3488,12 @@
     hazards.barrels.forEach(function (b) {
       if (!b.spent && b.x + b.w >= cam.x && b.x <= cam.x + VIEW_W &&
           b.y + b.h >= cam.y && b.y <= cam.y + VIEW_H) { drawBarrel(b.x, b.y, b.fuse); }
+    });
+    hazards.blocks.forEach(function (b) {
+      if (b.phase !== 'spent' && b.x + 16 >= cam.x && b.x <= cam.x + VIEW_W &&
+          b.y + 22 >= cam.y && b.y <= cam.y + VIEW_H) {
+        drawFallingBlock(b.x, b.y, b.warning, b.anchored);
+      }
     });
   }
 
@@ -3453,7 +3506,7 @@
     for (var cy = r0; cy <= r1; cy++) {
       for (var cx = c0; cx <= c1; cx++) {
         var ch = level.grid[cy][cx];
-        if (ch === '.') { continue; }
+        if (ch === '.' || ch === 'v') { continue; }
         var x = cx * TILE, y = cy * TILE;
         if (ch === '#' || ch === '%') {
           /* A fake wall looks exactly the same as rock. You walk through it. */
@@ -6773,6 +6826,7 @@
     returnToEditor: returnToEditor,
     editorPalette: function (world) { return PALETTES[WORLDS[world].pal]; },
     drawBarrel: drawBarrel,
+    drawFallingBlock: drawFallingBlock,
     hintTrail: hintTrail,
     worlds: WORLDS,
     weapons: WEAPONS,

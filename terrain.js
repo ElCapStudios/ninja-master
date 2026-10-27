@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
 
-  function solid(ch) { return '#=T/+'.indexOf(ch) >= 0; }
+  function solid(ch) { return '#=T/+v'.indexOf(ch) >= 0; }
 
   /* Keep the original footholds in mazes, and a two-tile-deep bedrock
      trench in runs. Digging can open routes, never remove a required jump. */
@@ -64,7 +64,7 @@
     }
   }
 
-  var api = { protection: protection, canBreak: canBreak, blastCells: blastCells };
+  var api = { protection: protection, canBreak: canBreak, blastCells: blastCells, solid: solid };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
   else { root.NinjaTerrain = api; }
 })(typeof window !== 'undefined' ? window : this);

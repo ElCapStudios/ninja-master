@@ -48,7 +48,10 @@
           ctx.fillStyle = pal.plankTop; ctx.fillRect(px, py + 4, 32, 4);
         } else if (ch === 'e') {
           ctx.save(); ctx.translate(px + 4, py); ctx.scale(2, 2);
-          ninja.drawBarrel(0, 0, -1); ctx.restore();
+          ninja.drawBarrel(0, 0, -1, ctx); ctx.restore();
+        } else if (ch === 'v') {
+          ctx.save(); ctx.translate(px, py); ctx.scale(2, 2);
+          ninja.drawFallingBlock(0, 0, 0, false, ctx); ctx.restore();
         } else if (ch !== '.') {
           ctx.fillStyle = '#05060d'; ctx.fillRect(px + 2, py + 2, 28, 28);
           ctx.fillStyle = colors[ch]; ctx.fillText(ch, px + 16, py + 17);

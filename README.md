@@ -62,8 +62,8 @@ The editor uses the same tiles and world colors as the game.
 The grid has **24 columns and 17 rows**. It does not resize.
 **Start** and **Flag** move when you place them again, so each has one spot.
 Put both on a floor or ladder, away from the top and side edges.
-The editor has 19 tile tools. A test can have up to 3 gems, 16 zombies,
-16 barrels and 64 items in all, so it stays small for older tablets.
+The editor has 20 tile tools. A test can have up to 3 gems, 16 zombies,
+16 barrels, 16 falling blocks and 64 items in all, so it stays small for older tablets.
 
 On a small phone, turn **Move view** on to scroll the grid, then turn it off
 to paint. Each tile stays at least 24 pixels wide. **Undo** brings back the
@@ -104,6 +104,26 @@ It pushes the ninja but does not take a heart. Each barrel bursts once per
 try. A retry restores the original map. Green Start and Ice Slide have small
 chain examples. The game allows at most 24 barrels; editor drafts allow 16.
 No new button, save format, sound file or network service is needed.
+
+### Falling blocks
+
+Only tan blocks with a down arrow (`v`) can fall. Break the floor right under
+one with DIG or a blast. It shakes, flashes and drops dust for at least
+60 play ticks (one second at 60 Hz), then falls. Pause and hit-stop freeze
+the whole warning and fall. A block with bright corner bolts stays fixed:
+the terrain rules protect it as part of a safe route.
+
+A falling block crumbles on the first floor, foe, barrel or ninja it hits.
+It can hurt a foe or light a barrel, but only bounces the ninja up a little.
+It leaves no solid rubble, so it cannot seal a flag or crush a child.
+Death clears active falls and resets pending warnings and fuses. Retry
+restores every original tile and hazard. Log Hop and Ice Slide have examples,
+including barrels that can break a falling block's support.
+
+Custom hazard maps always show a warning before a test. The path check tries
+each trigger on its own and all triggers together, including the terrain
+states between blasts and falls. It checks the flag and gems, but it does not
+prove that every timing or dig pattern is safe. Test those paths yourself.
 
 ## Dig your own route
 
@@ -442,6 +462,13 @@ reports any spot you could fall into and not get out of.
 It also checks full excavation and three fixed partial blast patterns in
 every level. The flag, keys and gems must still be in reach, with no trapped
 spots. `terrain.js` holds the same protection rules used by the game.
+For hazard maps, it also runs every subset of barrel triggers and removable
+falling-block supports under each of those four patterns. It checks each
+changed terrain state, not just the final map, with the original protection
+mask. The current three example maps use 80 simulations and 175 terrain
+states. The checker allows at most 6 hazards in a campaign map and stops a
+simulation after 4096 play ticks. These are bounded path checks, not a proof
+of every live movement, enemy timing or possible dig order.
 
 Check the game controls, saves and combat too:
 
@@ -483,6 +510,7 @@ of height.
 | `k` | key |
 | `T` | spring |
 | `e` | exploding barrel |
+| `v` | falling block (only after its support is removed) |
 | `o` | coin |
 | `g` | hidden gem |
 | `P` | where the ninja starts |
@@ -595,6 +623,22 @@ The editor check covers paint, erase, saved data, limits and storage errors.
 It also compares the shared movement rules with the independent generator on
 every campaign tile. The game check covers custom rewards, death, replay,
 pause, exit and returning to campaign play.
+Hazard checks cover all eight weapons, expired and enemy-hit blasts, full
+fuses, single detonation, chain bounds, terrain protection, block support,
+warning time, solid impacts, player and foe effects, death and pause.
+The editor includes a safe control and a falling bridge that loses its path.
+
+To run the new game checks on the recorded old game source:
+
+```sh
+GAME_SOURCE_REF=893cab36848dd6b0437a99e369bd6335a8bfa295 node tools/checkgame.cjs
+GAME_SOURCE_REF=96a88c9b7e5e076ee76ca77fac83e218110c2662 node tools/checkgame.cjs
+```
+
+The editor base passes the 28 old game checks and fails the 9 hazard checks.
+The barrels checkpoint fails the 5 falling-block checks. The current game
+must pass all 37. The current test harness and helper modules stay loaded
+for these controls, so failure means missing game behavior, not a missing file.
 
 For browser checks, use an installed Playwright package with its Chromium
 and WebKit browsers:
@@ -607,7 +651,8 @@ If Playwright is installed outside this folder, set `PLAYWRIGHT_MODULE` to
 its module path. Set `EDITOR_ARTIFACTS` to choose where screenshots and the
 result JSON go. The check runs desktop and five touch screen sizes in both
 browsers, using `file://index.html`. Playwright is a test tool, not a game
-dependency.
+dependency. It also checks the actual hazard sprite pixels in the editor,
+shots from keyboard and touch, visible fall timing, chains, retry and reload.
 
 ## Handy tricks for testing
 
@@ -663,6 +708,7 @@ Then open http://localhost:8000 in a browser.
 | `index.html` | The page, and the touch buttons |
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, weapons, bosses, menus, drawing |
+| `hazards.js` | Bounded barrel fuses, warned falling blocks and shared hazard simulation |
 | `terrain.js` | Shared rules for earth, firm ledges and safe digging |
 | `level-editor.js`, `level-editor.css` | The touch and keyboard level editor |
 | `level-data.js` | Bounded custom maps, validation and three local save slots |

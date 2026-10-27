@@ -36,7 +36,8 @@ async function button(page, id, touch) {
 async function paint(page, tile, x, y, touch) {
   const b = page.locator('#editor-palette button').filter({ has: page.locator('[aria-hidden="true"]', { hasText: tile }) });
   const selector = page.locator('#editor-palette button').filter({ hasText: ({
-    '.': 'Erase', '#': 'Earth', o: 'Coin', '=': 'Ledge', F: 'Flag', P: 'Start', '4': 'Laser'
+    '.': 'Erase', '#': 'Earth', o: 'Coin', '=': 'Ledge', F: 'Flag', P: 'Start', '4': 'Laser',
+    e: 'Barrel', v: 'Falling block', '/': 'Cracked rock'
   })[tile] });
   assert.equal(await b.count() > 0, true);
   if (touch) await selector.tap(); else await selector.click();
@@ -104,7 +105,7 @@ async function run(engine) {
       if (touch) {
         await button(page, 'btn-jump', true);
       } else {
-        await page.keyboard.press('Space'); await frames(page);
+        await page.keyboard.press('KeyZ'); await frames(page);
       }
       assert.ok(await page.evaluate(() => NINJA.player.vy < 0));
       await page.evaluate(() => { NINJA.level.grid[14][6] = '.'; });
@@ -249,6 +250,62 @@ async function run(engine) {
         await page.evaluate(() => Object.defineProperty(window, 'localStorage', window.storageDescriptor));
         results.push(engine + ': keyboard paint/erase, whole-stroke undo, start checks, no-path warning, real flag completion, death/retry, malformed/oversize storage, quota and storage access errors pass.');
       }
+      await paint(page, 'v', 8, 11, touch); await paint(page, '/', 8, 12, touch);
+      await paint(page, 'e', 7, 13, touch); await paint(page, 'e', 9, 13, touch);
+      const hazardDraft = await saved(page, touch);
+      const pixels = await page.locator('#editor-grid').evaluate(canvas => {
+        const ctx = canvas.getContext('2d');
+        return [
+          Array.from(ctx.getImageData(8 * 32 + 4, 11 * 32 + 8, 1, 1).data),
+          Array.from(ctx.getImageData(7 * 32 + 22, 13 * 32 + 14, 1, 1).data)
+        ];
+      });
+      assert.deepEqual(pixels, [[172, 141, 97, 255], [200, 88, 54, 255]], 'both original hazard sprites are drawn into the editor canvas');
+      await button(page, 'editor-test', touch);
+      assert.equal(await page.locator('#editor-warning').isVisible(), true);
+      assert.match(await page.locator('#editor-warning-text').textContent(), /not proof/);
+      await button(page, 'editor-anyway', touch);
+      await page.waitForFunction(() => NINJA.game.mode === 'play');
+      await page.evaluate(() => {
+        Object.assign(NINJA.player, { x: 5 * 16 + 3, y: 13 * 16 + 1, vx: 0, vy: 0, facing: 1 });
+        NINJA.giveWeapon('star');
+        window.hazardEvents = [];
+        function record() {
+          if (!NINJA.customPlaying) return;
+          const b = NINJA.hazards.blocks[0];
+          if (b && !hazardEvents.some(e => e.phase === b.phase)) {
+            hazardEvents.push({ phase: b.phase, warning: b.warning, frame: NINJA.game.frame, time: performance.now() });
+          }
+          requestAnimationFrame(record);
+        }
+        requestAnimationFrame(record);
+      });
+      if (touch) await button(page, 'btn-throw', true);
+      else { await page.keyboard.press('KeyX'); await frames(page); }
+      await page.waitForFunction(() => NINJA.hazards.barrels[0].fuse > 0);
+      assert.equal(await page.evaluate(() => NINJA.hazards.barrels[0].spent), false);
+      await page.waitForFunction(() => NINJA.hazards.blocks[0].phase === 'warning');
+      await page.screenshot({ path: path.join(out, engine + '-hazard-warning-' + viewport.width + '.png') });
+      await page.waitForFunction(() => NINJA.hazards.barrels.every(b => b.spent) && NINJA.hazards.blocks[0].phase === 'spent');
+      const events = await page.evaluate(() => window.hazardEvents);
+      const warning = events.find(e => e.phase === 'warning'), falling = events.find(e => e.phase === 'fall');
+      assert.ok(warning && falling, 'warning and motion are both visible');
+      assert.ok(falling.frame - warning.frame >= warning.warning, 'visible remaining warning counts full play ticks');
+      assert.ok(falling.time - warning.time >= (warning.warning - 1) * 1000 / 60 - 25, 'warning is not a fast wall-clock blink');
+      await button(page, 'custom-retry', touch);
+      await page.waitForFunction(() => NINJA.game.mode === 'play');
+      assert.equal(await page.evaluate(() => NINJA.level.grid[12][8]), '/');
+      assert.equal(await page.evaluate(() => NINJA.hazards.blocks[0].phase), 'idle');
+      assert.equal(await page.evaluate(() => NINJA.hazards.barrels[0].fuse), -1);
+      await button(page, 'custom-edit', touch);
+      assert.deepEqual(await saved(page, touch), hazardDraft, 'hazard retry and exit preserve the exact draft');
+      await page.reload(); await frames(page);
+      await button(page, 'btn-editor', touch); await button(page, 'editor-load', touch);
+      assert.deepEqual(await saved(page, touch), hazardDraft, 'both hazard tools survive a real save and page reload');
+      await page.locator('#level-editor').evaluate(el => { el.scrollTop = 0; });
+      await page.screenshot({ path: path.join(out, engine + '-hazard-editor-' + viewport.width + '.png') });
+      results.push(engine + ' ' + viewport.width + 'x' + viewport.height +
+        ': keyboard/touch shot, barrel chain, visible full fall warning, support removal, crumble, retry and hazard slot reload pass.');
       await button(page, 'editor-close', touch);
       assert.equal(await page.evaluate(() => NINJA.game.mode), 'title');
       assert.equal(await page.evaluate(() => localStorage.getItem('ninjaMasterSaveV2')), campaign);

@@ -28,7 +28,7 @@ const ROOM_W = 15;
 const ROOM_H = 17;
 const RUN_FLOOR = 14;
 
-const SOLID_SET = '#=T/';
+const SOLID_SET = '#=T/v';
 
 const WORLD_NAMES = [
   'Green Woods', 'Frost Peak', 'Sand Tomb', 'Fire Keep',
@@ -46,7 +46,7 @@ const ALL_BOSS_CH = 'KJQDXb89';
 /* Weapon boxes. '7' is the ice gun. */
 const CORE_WEAPON_CH = '123456';
 const ALL_WEAPON_CH = '1234567';
-const LEGAL = '.#=^~T%+|/PFoHM*BRkge' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
+const LEGAL = '.#=^~T%+|/PFoHM*BRkgev' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 const LAVA_WORLDS = [3, 6];
 
 // ---------------------------------------------------------------------------
@@ -513,17 +513,19 @@ function checkOne(level, index) {
     gems.concat(findAll(grid, 'k')).forEach(function (it) {
       if (!result.reachable(it.x, it.y)) say('dig pattern ' + pattern + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
     });
-    const barrelCount = findAll(grid, 'e').length;
-    if (barrelCount > 6) { say('campaign hazard check allows up to 6 barrels per map'); continue; }
-    for (let triggers = 1; triggers < (1 << barrelCount); triggers++) {
+    const hazardCount = findAll(grid, 'ev').length;
+    if (hazardCount > 6) { say('campaign hazard check allows up to 6 hazards per map'); continue; }
+    for (let triggers = 0; hazardCount && triggers < (1 << hazardCount); triggers++) {
       const state = hazards.simulate(dug.map(r => r.join('')), mask, triggers);
-      const route = analyse(state.rows);
-      const label = 'dig ' + pattern + ', barrels ' + triggers;
-      if (!route || !route.ok) { say(label + ' cuts off the flag'); continue; }
-      if (route.traps().length) say(label + ' creates a trap');
-      gems.concat(findAll(grid, 'k')).forEach(function (it) {
-        if (!route.reachable(it.x, it.y)) say(label + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
-      });
+      for (const snapshot of state.snapshots) {
+        const route = analyse(snapshot);
+        const label = 'dig ' + pattern + ', hazards ' + triggers;
+        if (!route || !route.ok) { say(label + ' cuts off the flag'); continue; }
+        if (route.traps().length) say(label + ' creates a trap');
+        gems.concat(findAll(grid, 'k')).forEach(function (it) {
+          if (!route.reachable(it.x, it.y)) say(label + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
+        });
+      }
     }
   }
 

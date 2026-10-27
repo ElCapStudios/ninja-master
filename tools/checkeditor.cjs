@@ -6,6 +6,47 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.join(__dirname, '..');
 const tests = {
+  'falling blocks are solid in the solver and saved without a version change': function () {
+    const terrain = require('../terrain.js'), hazards = require('../hazards.js');
+    const draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 7, 13, 'e');
+    const checked = data.validate(draft, true);
+    assert.equal(checked.error, undefined);
+    assert.equal(checked.reachable, true);
+    assert.match(checked.warning, /not proof/);
+    assert.equal(checked.hazardWarning, false);
+    const solver = rules.makeSolver(draft.rows), moves = [];
+    solver.moves(8, 10, 0, false, (...p) => moves.push(p));
+    assert.ok(moves.length > 0, 'a falling tile is a solid foothold before it falls');
+    const mask = terrain.protection(draft.rows, false, 'run');
+    const result = hazards.simulate(draft.rows, mask, 1);
+    assert.equal(result.rows[11][8], '.', 'mixed hazards are not ignored');
+    assert.equal(draft.rows[11][8], 'v');
+    const slots = new Map(), storage = { getItem: k => slots.get(k), setItem: (k, v) => slots.set(k, v) };
+    for (let slot = 1; slot <= 3; slot++) {
+      assert.ok(data.save(storage, slot, draft).value);
+      assert.deepEqual(data.read(storage, slot).value, draft);
+      assert.equal(JSON.parse(slots.get('ninjaMasterLevelSlot' + slot)).v, 1);
+    }
+    for (let x = 1; x <= 16; x++) data.paint(draft, x, 9, 'v');
+    assert.match(data.validate(draft, true).error, /up to 16 falling blocks/);
+    assert.match(data.save(storage, 1, draft).error, /up to 16 falling blocks/);
+    assert.equal(data.read(storage, 1).value.rows[9][8], '.', 'oversized draft cannot overwrite a slot');
+  },
+  'safe hazard control warns without claiming proof, and a disappearing bridge gives a path warning': function () {
+    const safe = data.template();
+    for (const x of [8, 12, 16]) data.paint(safe, x, 13, 'v');
+    const clean = data.validate(safe, true);
+    assert.equal(clean.reachable, true); assert.equal(clean.hazardWarning, false);
+    assert.match(clean.warning, /not proof/);
+    const bad = data.copy(safe);
+    for (let x = 6; x <= 17; x++) { data.paint(bad, x, 14, '.'); data.paint(bad, x, 15, '^'); }
+    const unsafe = data.validate(bad, true);
+    assert.equal(unsafe.reachable, true, 'initial solid falling bridge provides a path');
+    assert.equal(unsafe.hazardWarning, true, 'transformed map cannot keep its initial green path result');
+    assert.match(unsafe.warning, /cut off the flag or a gem/);
+    assert.equal(unsafe.error, undefined, 'conservative warning still permits intentional test-play');
+  },
   'barrels round-trip in old slot format with explicit limits': function () {
     const draft = data.template(), slots = new Map();
     const storage = { getItem: key => slots.get(key) || null, setItem: (key, value) => slots.set(key, value) };
@@ -25,7 +66,7 @@ const tests = {
       assert.equal(draft.rows.length, 17);
       assert.ok(draft.rows.every(row => row.length === 24));
     }
-    assert.equal(data.tiles.length, 19);
+    assert.equal(data.tiles.length, 20);
   },
   'painting, erasing and moving unique start and flag': function () {
     const draft = data.template(), original = data.copy(draft);
@@ -111,7 +152,7 @@ const tests = {
       const old = makeOriginal(level.rows), current = rules.makeSolver(level.rows);
       for (let y = 0; y < old.H; y++) {
         for (let x = 0; x < old.W; x++) {
-          if ('#=T/+'.includes(level.rows[y][x])) continue;
+          if ('#=T/+v'.includes(level.rows[y][x])) continue;
           for (const mode of [0, 1]) for (const key of [false, true]) {
             const a = [], b = [];
             old.moves(x, y, mode, key, (...p) => a.push(p));

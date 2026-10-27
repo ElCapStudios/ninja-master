@@ -75,6 +75,8 @@ function game(save) {
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
     doThrow: doThrow, updateShurikens: updateShurikens,
     makeShot: makeShot, spotIsSafe: spotIsSafe,
+    hitByBlock: typeof hitByBlock === 'function' ? hitByBlock : null,
+    crumbleBlock: typeof crumbleBlock === 'function' ? crumbleBlock : null,
     killPlayer: killPlayer, gameOver: gameOver, bankRun: bankRun, saveBest: saveBest, saveProgress: saveProgress,
     markGem: markGem, awardMedals: awardMedals, unlockUpTo: unlockUpTo,
     get safeSpot() { return safeSpot; }, get spawn() { return spawn; },
@@ -131,6 +133,128 @@ function oldFlight(speed, held) {
 }
 
 const tests = {
+  'only marked unsupported blocks fall after at least 60 warning ticks, for keyboard and touch': function () {
+    for (const touch of [false, true]) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling blocks must be loaded into live state');
+      const b = g.n.hazards.blocks[0], p = g.n.player;
+      g.tick(80);
+      assert.equal(b.phase, 'idle', 'solid support keeps a marked block still');
+      assert.equal(g.n.level.grid[11][8], 'v');
+      p.x = 8 * 16 + 3; p.y = 13 * 16 + 1; p.vx = p.vy = 0;
+      if (touch) {
+        g.n.input.up = true; g.node('btn-dig').fire('pointerdown'); g.tick();
+        g.node('btn-dig').fire('pointerup'); g.n.input.up = false;
+      } else {
+        g.win.fire('keydown', { code: 'ArrowUp' }); g.win.fire('keydown', { code: 'KeyC' });
+        g.tick();
+        g.win.fire('keyup', { code: 'KeyC' }); g.win.fire('keyup', { code: 'ArrowUp' });
+      }
+      assert.equal(g.n.level.grid[12][8], '.', 'actual DIG removes the support');
+      assert.equal(b.phase, 'idle', 'dig starts a fresh warning on the next play tick');
+      p.x = 2 * 16 + 3;
+      g.tick(); assert.equal(b.phase, 'warning'); assert.equal(b.warning, 60);
+      assert.equal(g.t.spotIsSafe(8 * 16 + 3, 13 * 16 + 1), false, 'no checkpoint below a possible fall');
+      g.tick(59);
+      assert.equal(b.phase, 'warning'); assert.equal(b.warning, 1); assert.equal(b.y, 176);
+      assert.equal(g.n.level.grid[11][8], 'v', 'warning block stays solid');
+      g.tick(); assert.equal(b.phase, 'fall'); assert.equal(b.y, 176);
+      assert.equal(g.n.level.grid[11][8], '.');
+      g.tick(30);
+      assert.equal(b.phase, 'spent'); assert.equal(b.y + b.h, 14 * 16, 'swept floor collision, not tunnelling');
+      assert.equal(g.n.level.grid[14][8], '#', 'no impact carving or permanent rubble');
+      assert.equal(g.n.level.grid[14][7], '#', 'old earth never falls');
+      assert.equal(draft.rows[11][8], 'v', 'draft is not changed by test physics');
+    }
+  },
+  'falling warnings and motion freeze on pause and hit-stop, and reset safely on death and retry': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 11, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+    g.t.breakBlock(8, 12); g.tick();
+    const b = g.n.hazards.blocks[0], barrel = g.n.hazards.barrels[0];
+    g.win.NinjaHazards.arm(barrel);
+    g.key('KeyP'); const snapshot = JSON.stringify(g.n.hazards);
+    g.tick(100); assert.equal(JSON.stringify(g.n.hazards), snapshot);
+    g.key('Escape');
+    g.n.game.hitStop = 5; g.tick(5); assert.equal(JSON.stringify(g.n.hazards), snapshot);
+    for (let i = 0; i < 100 && b.phase !== 'fall'; i++) g.tick();
+    assert.equal(b.phase, 'fall', 'warning finishes after play ticks, not hit-stop ticks');
+    g.n.game.hitStop = 0; g.key('KeyP'); const y = b.y;
+    g.tick(60); assert.equal(b.y, y, 'pause stops moving blocks too');
+    g.key('Escape');
+    g.t.killPlayer(); g.tick(56);
+    assert.equal(b.phase, 'spent', 'death clears an active fall rather than restoring it on the ninja');
+    assert.equal(g.n.game.mode, 'play');
+    g.n.restartCustom();
+    assert.equal(g.n.hazards.blocks[0].phase, 'idle');
+    assert.equal(g.n.hazards.barrels[0].fuse, -1);
+    assert.equal(g.n.level.grid[12][8], '/');
+    g.t.breakBlock(8, 12); g.tick(); g.t.killPlayer(); g.tick(56);
+    assert.equal(g.n.hazards.blocks[0].phase, 'idle', 'death resets a pending warning');
+    g.tick(); assert.equal(g.n.hazards.blocks[0].warning, 60, 'surviving unsupported tiles give a fresh full warning');
+  },
+  'falling impacts use shared enemy damage and safely bounce the ninja, with no solid deposits': function () {
+    for (const target of ['foe', 'ninja', 'barrel', 'ledge', 'door', 'earth', 'falling', 'cracked', 'spring']) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 8, 8, 'v'); data.paint(draft, 8, 9, '/');
+      if (target === 'barrel') data.paint(draft, 8, 13, 'e');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+      const h = g.win.NinjaHazards, state = g.n.hazards, b = state.blocks[0], grid = g.n.level.grid;
+      const player = g.n.player, hearts = g.n.game.hearts;
+      let foe;
+      if (target === 'foe') {
+        foe = { x: 8 * 16, y: 13 * 16, w: 14, h: 16, hp: 2, maxHp: 2, alive: true };
+        g.n.enemies.push(foe);
+      } else if (target === 'ninja') {
+        player.x = 8 * 16 + 3; player.y = 13 * 16 + 1;
+      } else if (target !== 'barrel') {
+        grid[12][8] = ({ ledge: '=', door: '+', earth: '#', falling: 'v', cracked: '/', spring: 'T' })[target];
+      }
+      g.t.breakBlock(8, 9);
+      for (let i = 0; i < 160 && b.phase !== 'spent'; i++) h.fall(state, grid, g.t.hitByBlock, g.t.crumbleBlock);
+      assert.equal(b.phase, 'spent', target + ': crumbles at first contact');
+      assert.equal(grid[8][8], '.');
+      if (target === 'foe') assert.equal(foe.alive, false, 'actual damageEnemy path');
+      if (target === 'ninja') assert.ok(player.vy < 0, 'safe bounce, not crushing');
+      if (target === 'barrel') assert.equal(state.barrels[0].fuse, 48, 'impact arms a full fuse');
+      if (['ledge', 'door', 'earth', 'falling', 'cracked', 'spring'].includes(target)) {
+        assert.equal(b.y + 16, 12 * 16, target + ': lands exactly on solid top');
+        assert.notEqual(grid[12][8], '.', 'impact does not change the solid');
+      }
+      assert.equal(g.n.game.hearts, hearts);
+    }
+  },
+  'barrel blasts remove supports, protected falling blocks stay fixed, and chains settle within bounds': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 7, 13, 'e');
+    data.paint(draft, 2, 14, 'v');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+    const h = g.win.NinjaHazards, state = g.n.hazards, block = state.blocks[0], anchored = state.blocks[1];
+    assert.ok(anchored.anchored, 'spawn footing is protected even when marked');
+    g.t.breakBlock(2, 15);
+    h.arm(state.barrels[0]);
+    for (let i = 0; i < 48; i++) h.tick(state, g.t.doBlast);
+    assert.equal(g.n.level.grid[12][8], '.', 'real barrel blast carves support');
+    h.fall(state, g.n.level.grid);
+    assert.equal(block.warning, 60, 'blast cannot skip the fall warning');
+    for (let i = 0; i < 120; i++) h.fall(state, g.n.level.grid);
+    assert.equal(anchored.phase, 'idle'); assert.equal(g.n.level.grid[14][2], 'v');
+    assert.equal(block.phase, 'spent');
+    const rows = draft.rows.map(row => row.replace('P', '.'));
+    const simulation = h.simulate(rows, g.n.level.protected, 1);
+    assert.equal(simulation.detonations, 1); assert.ok(simulation.ticks < 4096);
+    assert.equal(simulation.rows[11][8], '.');
+    assert.ok(simulation.snapshots.some(rows => rows[11][8] === 'v' && rows[12][8] === '.'),
+      'checker sees the warning geometry before the block is removed');
+    assert.equal(h.create(['v'.repeat(24)]).blocks.length, 24, 'clean engine limit control');
+    assert.throws(() => h.create(['v'.repeat(25)]), /at most 24 falling/);
+  },
   'all eight weapons light barrels, with a full fuse and no touch trigger': function () {
     for (const weapon of ['star', 'shotgun', 'rocket', 'flame', 'laser', 'boomerang', 'bombs', 'ice']) {
       const g = game({ v: 4, buys: { ice: 1 } }), data = g.win.NinjaLevelData;
@@ -158,6 +282,37 @@ const tests = {
       for (let i = 0; i < 100; i++) g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
       assert.equal(g.n.game.score, score, 'spent barrels cannot detonate twice');
     }
+  },
+  'expired bombs and rockets and enemy-hit blasts also arm nearby barrels': function () {
+    for (const weapon of ['bombs', 'rocket']) for (const path of ['expiry', 'enemy']) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 10, 13, 'e'); data.paint(draft, 9, 13, 'Z');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards, 'barrel state must exist');
+      const shot = g.t.makeShot(weapon, 9 * 16, 13 * 16 + 4, 0, 0);
+      if (path === 'expiry') shot.life = 1;
+      g.n.shurikens.push(shot); g.t.updateShurikens();
+      assert.equal(g.n.hazards.barrels[0].fuse, 48, weapon + ' ' + path + ' blast arms the barrel without a direct hit');
+      assert.equal(g.n.shurikens.length, 0);
+    }
+  },
+  'real custom hazard chains, falls, death and retry leave campaign bytes and memory unchanged': function () {
+    const g = game({ v: 4, max: 19, best: 700, coins: 230, buys: { ice: 1 }, gems: { 0: 7 }, medals: { 0: 5 } });
+    const data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 7, 13, 'e');
+    data.paint(draft, 9, 13, 'e'); data.paint(draft, 10, 13, 'Z');
+    const progress = JSON.stringify(g.n.progress), bytes = g.storage.get('ninjaMasterSaveV2');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'mixed hazards must exist');
+    g.n.shurikens.push(g.t.makeShot('star', 7 * 16, 13 * 16 + 4, 0, 0));
+    g.t.updateShurikens(); g.tick(250);
+    assert.ok(g.n.hazards.barrels.every(b => b.spent));
+    assert.equal(g.n.hazards.blocks[0].phase, 'spent');
+    assert.equal(g.n.enemies[0].alive, false); assert.ok(g.n.game.score > 0);
+    g.t.killPlayer(); g.tick(56); g.n.restartCustom(); g.n.returnToEditor(); g.n.closeEditor();
+    assert.equal(JSON.stringify(g.n.progress), progress);
+    assert.equal(g.storage.get('ninjaMasterSaveV2'), bytes);
+    assert.equal(draft.rows[11][8], 'v');
   },
   'barrel chains are bounded, ordered by full fuses, and use protected terrain': function () {
     const g = game(), data = g.win.NinjaLevelData, h = g.win.NinjaHazards;
