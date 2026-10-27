@@ -62,8 +62,8 @@ The editor uses the same tiles and world colors as the game.
 The grid has **24 columns and 17 rows**. It does not resize.
 **Start** and **Flag** move when you place them again, so each has one spot.
 Put both on a floor or ladder, away from the top and side edges.
-The editor has 18 tile tools. A test can have up to 3 gems, 16 zombies and
-64 items in all, so it stays small for older tablets.
+The editor has 19 tile tools. A test can have up to 3 gems, 16 zombies,
+16 barrels and 64 items in all, so it stays small for older tablets.
 
 On a small phone, turn **Move view** on to scroll the grid, then turn it off
 to paint. Each tile stays at least 24 pixels wide. **Undo** brings back the
@@ -91,6 +91,19 @@ or unlocked levels. Death, retry, completion and exit all stay in test mode.
 Your campaign map choice and the `ninjaMasterSaveV2` save stay unchanged.
 Custom slots use separate keys, `ninjaMasterLevelSlot1` through
 `ninjaMasterLevelSlot3`. The old game in `/v1/` is unchanged.
+
+### Exploding barrels
+
+Shoot a marked red barrel with any weapon to light its fuse. Touching it
+does nothing. It flashes for at least 48 play ticks (0.8 seconds at 60 Hz)
+before it bursts. Pause and hit-stop freeze the fuse. Nearby barrels light
+their own full fuse, so you can watch a chain move along.
+
+The blast hurts foes and breaks only earth that the normal dig rules allow.
+It pushes the ninja but does not take a heart. Each barrel bursts once per
+try. A retry restores the original map. Green Start and Ice Slide have small
+chain examples. The game allows at most 24 barrels; editor drafts allow 16.
+No new button, save format, sound file or network service is needed.
 
 ## Dig your own route
 
@@ -469,6 +482,7 @@ of height.
 | `+` | locked door |
 | `k` | key |
 | `T` | spring |
+| `e` | exploding barrel |
 | `o` | coin |
 | `g` | hidden gem |
 | `P` | where the ninja starts |

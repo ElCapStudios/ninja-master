@@ -6,6 +6,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.join(__dirname, '..');
 const tests = {
+  'barrels round-trip in old slot format with explicit limits': function () {
+    const draft = data.template(), slots = new Map();
+    const storage = { getItem: key => slots.get(key) || null, setItem: (key, value) => slots.set(key, value) };
+    assert.ok(data.paint(draft, 8, 13, 'e'));
+    assert.equal(data.validate(draft, true).error, undefined);
+    assert.ok(data.save(storage, 1, draft).value);
+    assert.deepEqual(data.read(storage, 1).value, draft);
+    for (let x = 1; x <= 16; x++) data.paint(draft, x, 10, 'e');
+    assert.match(data.validate(draft, true).error, /up to 16 barrels/);
+    assert.match(data.save(storage, 1, draft).error, /up to 16 barrels/);
+    assert.equal(data.read(storage, 1).value.rows[13][8], 'e', 'bad draft does not replace saved slot');
+  },
   'safe floor, eight themes and bounded palette': function () {
     for (let world = 0; world < 8; world++) {
       const draft = data.template(); draft.world = world;
@@ -13,7 +25,7 @@ const tests = {
       assert.equal(draft.rows.length, 17);
       assert.ok(draft.rows.every(row => row.length === 24));
     }
-    assert.equal(data.tiles.length, 18);
+    assert.equal(data.tiles.length, 19);
   },
   'painting, erasing and moving unique start and flag': function () {
     const draft = data.template(), original = data.copy(draft);

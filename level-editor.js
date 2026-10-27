@@ -46,6 +46,9 @@
         } else if (ch === '=') {
           ctx.fillStyle = pal.plank; ctx.fillRect(px, py + 4, 32, 12);
           ctx.fillStyle = pal.plankTop; ctx.fillRect(px, py + 4, 32, 4);
+        } else if (ch === 'e') {
+          ctx.save(); ctx.translate(px + 4, py); ctx.scale(2, 2);
+          ninja.drawBarrel(0, 0, -1); ctx.restore();
         } else if (ch !== '.') {
           ctx.fillStyle = '#05060d'; ctx.fillRect(px + 2, py + 2, 28, 28);
           ctx.fillStyle = colors[ch]; ctx.fillText(ch, px + 16, py + 17);

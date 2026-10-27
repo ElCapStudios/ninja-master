@@ -62,6 +62,8 @@ function game(save) {
   vm.runInContext(source('levels.js'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'terrain.js'), 'utf8'), context);
   sandbox.NinjaTerrain = win.NinjaTerrain;
+  vm.runInContext(fs.readFileSync(path.join(root, 'hazards.js'), 'utf8'), context);
+  sandbox.NinjaHazards = win.NinjaHazards;
   for (const file of ['level-rules.js', 'level-data.js']) {
     vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
   }
@@ -72,6 +74,7 @@ function game(save) {
     doBlast: doBlast, damageEnemy: damageEnemy, enemyShoot: enemyShoot,
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
     doThrow: doThrow, updateShurikens: updateShurikens,
+    makeShot: makeShot, spotIsSafe: spotIsSafe,
     killPlayer: killPlayer, gameOver: gameOver, bankRun: bankRun, saveBest: saveBest, saveProgress: saveProgress,
     markGem: markGem, awardMedals: awardMedals, unlockUpTo: unlockUpTo,
     get safeSpot() { return safeSpot; }, get spawn() { return spawn; },
@@ -128,6 +131,82 @@ function oldFlight(speed, held) {
 }
 
 const tests = {
+  'all eight weapons light barrels, with a full fuse and no touch trigger': function () {
+    for (const weapon of ['star', 'shotgun', 'rocket', 'flame', 'laser', 'boomerang', 'bombs', 'ice']) {
+      const g = game({ v: 4, buys: { ice: 1 } }), data = g.win.NinjaLevelData;
+      const draft = data.template(); data.paint(draft, 8, 13, 'e');
+      g.n.openEditor(); assert.equal(g.n.playCustom(draft).error, undefined);
+      assert.ok(g.n.hazards, 'hazard state must be loaded from the map');
+      const b = g.n.hazards.barrels[0], p = g.n.player;
+      p.x = b.x; p.y = b.y - 1; g.tick(3);
+      assert.equal(b.fuse, -1, weapon + ': walking through is safe');
+      p.x = 2 * 16 + 3;
+      g.n.shurikens.push(g.t.makeShot(weapon, b.x - 3, b.y + 3, 3, 0));
+      g.t.updateShurikens();
+      assert.equal(b.fuse, 48, weapon + ': real shot arms the barrel');
+      const enemy = g.n.enemies[0] || { x: b.x + 14, y: b.y, w: 12, h: 14,
+        alive: true, hp: 3, maxHp: 3, color: '#ffffff' };
+      g.n.enemies.push(enemy);
+      g.n.game.hitStop = 0;
+      for (let i = 0; i < 47; i++) g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(b.spent, false, 'no early detonation');
+      assert.equal(enemy.hp, 3);
+      g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(b.spent, true);
+      assert.equal(enemy.alive, false, 'real shared blast kills a nearby foe');
+      const score = g.n.game.score;
+      for (let i = 0; i < 100; i++) g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(g.n.game.score, score, 'spent barrels cannot detonate twice');
+    }
+  },
+  'barrel chains are bounded, ordered by full fuses, and use protected terrain': function () {
+    const g = game(), data = g.win.NinjaLevelData, h = g.win.NinjaHazards;
+    const draft = data.template();
+    for (const x of [6, 8, 10]) data.paint(draft, x, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards, 'barrels must be present in game state');
+    const state = g.n.hazards, grid = g.n.level.grid;
+    const mask = g.n.level.protected, before = grid.map(row => row.slice());
+    const b = state.barrels[2], p = g.n.player;
+    p.x = b.x + 15; p.y = b.y; p.vx = 0; p.vy = 0;
+    const hearts = g.n.game.hearts;
+    h.arm(b);
+    for (let i = 0; i < 48; i++) h.tick(state, g.t.doBlast);
+    assert.equal(state.barrels[1].fuse, 48, 'new chain link gets the full fuse in either list order');
+    assert.equal(state.barrels[1].spent, false);
+    assert.equal(g.n.game.hearts, hearts, 'blast pushes, never takes hearts');
+    assert.ok(p.vx > 0 && p.vy < 0);
+    assert.equal(grid[14][11], '.', 'unprotected earth is removed by real barrel blast');
+    for (let i = 0; i < 96; i++) h.tick(state, g.t.doBlast);
+    assert.ok(state.barrels.every(b => b.spent), 'chain completes');
+    for (let y = 0; y < grid.length; y++) for (let x = 0; x < grid[y].length; x++) {
+      if (mask[y][x]) assert.equal(grid[y][x], before[y][x], 'protected ' + x + ',' + y);
+    }
+    const rows = ['e'.repeat(h.barrelLimit)];
+    const full = h.create(rows); let depth = 0, maximum = 0, count = 0;
+    const blast = (x, y, radius) => { depth++; maximum = Math.max(maximum, depth); count++; h.ignite(full, x, y, radius); depth--; };
+    h.arm(full.barrels[0]);
+    for (let i = 0; i < 48 * 25; i++) h.tick(full, blast);
+    assert.equal(count, 24); assert.equal(maximum, 1, 'no recursive explosions');
+    assert.throws(() => h.create(['e'.repeat(25)]), /at most 24/);
+  },
+  'barrel fuse freezes during pause and hit-stop, and retry restores the draft': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards, 'barrels must exist');
+    const h = g.win.NinjaHazards, b = g.n.hazards.barrels[0];
+    h.arm(b);
+    g.n.game.hitStop = 4; g.tick(4); assert.equal(b.fuse, 48);
+    g.key('KeyP'); assert.equal(g.n.game.mode, 'paused');
+    g.tick(90); assert.equal(b.fuse, 48);
+    g.key('Escape'); g.tick();
+    assert.ok(b.fuse < 48);
+    g.n.restartCustom();
+    assert.equal(g.n.hazards.barrels[0].fuse, -1);
+    assert.equal(g.n.hazards.barrels[0].spent, false);
+    assert.equal(draft.rows[13][8], 'e');
+  },
   'old saves keep progress, shop items, gems and medals': function () {
     const save = { v: 4, max: 19, best: 700, gems: { 0: 7, 2: 3 }, coins: 230, spentGems: 4, buys: { ice: 1, heart: 2 }, medals: { 0: 5 } };
     const g = game(save);

@@ -74,7 +74,7 @@ const WEAPONS = ['1', '2', '3', '4', '5', '6', '7'];
 const CORE_WEAPONS = ['1', '2', '3', '4', '5', '6'];
 const CORE_WEAPON_CH = '123456';
 const ALL_WEAPON_CH = '1234567';
-const LEGAL = '.#=^~T%+|/PFoHM*BRkg' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
+const LEGAL = '.#=^~T%+|/PFoHM*BRkge' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 
 // lava and deep water belong only to Fire Keep and Deep Cave
 const LAVA_WORLDS = [3, 6];
@@ -1555,6 +1555,17 @@ function build() {
 }
 
 const levels = build();
+/* Optional toys beside the route, not replacements for any old tile. */
+for (const [index, points] of [[0, [[17, 13], [19, 13]]], [7, [[7, 13], [9, 13]]]]) {
+  const grid = toGrid(levels[index].rows);
+  for (const [x, y] of points) {
+    if (grid[y][x] !== '.') { throw Error('Barrel example overlaps an existing tile at ' + index + ':' + x + ',' + y); }
+    grid[y][x] = 'e';
+  }
+  levels[index].rows = gridRows(grid);
+  const problems = checkLevel(levels[index]);
+  if (problems.length) { throw Error('Barrel example: ' + problems.join('; ')); }
+}
 
 // one max up per world at most
 for (let world = 0; world < 8; world++) {

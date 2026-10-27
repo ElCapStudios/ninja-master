@@ -7,7 +7,7 @@
     ['=', 'Ledge'], ['|', 'Ladder'], ['T', 'Spring'], ['/', 'Cracked rock'],
     ['o', 'Coin'], ['g', 'Gem'], ['H', 'Heart'], ['Z', 'Zombie'],
     ['^', 'Spikes'], ['~', 'Lava'], ['k', 'Key'], ['+', 'Door'],
-    ['1', 'Shotgun'], ['4', 'Laser']
+    ['1', 'Shotgun'], ['4', 'Laser'], ['e', 'Barrel']
   ];
   var legal = tiles.map(function (t) { return t[0]; }).join('');
 
@@ -27,7 +27,7 @@
         !Array.isArray(value.rows) || value.rows.length !== HEIGHT) {
       return { error: 'This is not a valid saved level. Your draft is still here.' };
     }
-    var starts = [], flags = [], gems = 0, foes = 0, items = 0;
+    var starts = [], flags = [], gems = 0, foes = 0, items = 0, barrels = 0;
     for (var y = 0; y < HEIGHT; y++) {
       var row = value.rows[y];
       if (typeof row !== 'string' || row.length !== WIDTH) {
@@ -39,9 +39,11 @@
         if (row[x] === 'F') { flags.push({ x: x, y: y }); }
         if (row[x] === 'g') { gems++; }
         if (row[x] === 'Z') { foes++; }
+        if (row[x] === 'e') { barrels++; }
         if ('ogHZk14'.indexOf(row[x]) >= 0) { items++; }
       }
     }
+    if (barrels > 16) { return { error: 'Use up to 16 barrels. Erase a few, then try again.' }; }
     if (!forPlay) { return { value: copy(value) }; }
     if (starts.length !== 1 || flags.length !== 1) {
       return { error: 'Place one Start and one Flag, then try again.' };

@@ -652,6 +652,7 @@
   var gems = [];       /* the three hidden gems */
   var weaponBoxes = [];/* weapon boxes you can pick up */
   var blasts = [];     /* the round bang from a rocket or a bomb */
+  var hazards = null;
   var spawn = { x: 40, y: 40 };
   var safeSpot = { x: 40, y: 40 };
   var cam = { x: 0, y: 0 };
@@ -879,6 +880,7 @@
       kind: def.kind || 'run'
     };
     level.protected = NinjaTerrain.protection(rows, level.boss, level.kind);
+    hazards = NinjaHazards.create(rows);
     level.damage = {};
     game.hitStop = 0;
     /* 'seen' remembers which fake walls you have already walked into,
@@ -911,7 +913,9 @@
     for (var r = 0; r < level.h; r++) {
       for (var c = 0; c < level.w; c++) {
         var ch = level.grid[r][c];
-        if (ch === 'P') {
+        if (ch === 'e') {
+          level.grid[r][c] = '.';
+        } else if (ch === 'P') {
           spawn = { x: c * TILE + 3, y: r * TILE + 1 };
           level.grid[r][c] = '.';
         } else if (ch === 'o') {
@@ -1407,6 +1411,7 @@
 
   /* The round bang hurts nearby foes and carves unprotected earth. */
   function doBlast(x, y, radius, dmg) {
+    NinjaHazards.ignite(hazards, x, y, radius);
     hitStop(5);
     blasts.push({ x: x, y: y, r: 4, max: radius, t: 0 });
     game.shake = Math.max(game.shake, 10);
@@ -1419,16 +1424,7 @@
       if (dx * dx + dy * dy < radius * radius) { damageEnemy(e, dmg, 'blast'); }
     }
     /* Tile centres keep the hole round rather than clearing a square. */
-    var c0 = Math.floor((x - radius) / TILE), c1 = Math.floor((x + radius) / TILE);
-    var r0 = Math.floor((y - radius) / TILE), r1 = Math.floor((y + radius) / TILE);
-    for (var cy = r0; cy <= r1; cy++) {
-      if (cy < 0 || cy >= level.h) { continue; }
-      for (var cx = c0; cx <= c1; cx++) {
-        if (cx < 0 || cx >= level.w) { continue; }
-        var bx = cx * TILE + 8 - x, by = cy * TILE + 8 - y;
-        if (bx * bx + by * by <= (radius + 6) * (radius + 6)) { breakBlock(cx, cy); }
-      }
-    }
+    NinjaTerrain.blastCells(level.grid, x, y, radius, breakBlock);
     /* The bang pushes the ninja too, but it never hurts you. */
     var pdx = (player.x + 5) - x, pdy = (player.y + 7) - y;
     var d2 = pdx * pdx + pdy * pdy;
@@ -1894,6 +1890,7 @@
       toast(hint.off ? 'ARROWS OFF' : 'ARROWS ON', '#7ef0b0');
     }
 
+    NinjaHazards.tick(hazards, doBlast);
     updatePlayer();
     updateEnemies();
     updateShurikens();
@@ -3167,6 +3164,15 @@
       var gone = s.life <= 0 || hitWall || s.x < -30 || s.x > level.pxW + 30 ||
                  s.y < -40 || s.y > level.pxH + 40;
 
+      if (!gone) {
+        for (var bi = 0; bi < hazards.barrels.length; bi++) {
+          var barrel = hazards.barrels[bi];
+          if (barrel.spent || !overlap(s, barrel)) { continue; }
+          NinjaHazards.arm(barrel);
+          if (!s.pierce && !s.home) { gone = true; break; }
+        }
+      }
+
       if (gone) {
         if (s.blast > 0) { doBlast(s.x + s.w / 2, s.y + s.h / 2, s.blast, s.dmg); }
         else { burst(s.x + s.w / 2, s.y + s.h / 2, WEAPONS[s.wk] ? WEAPONS[s.wk].color : '#cfd8e8', 4, 1.6); }
@@ -3407,6 +3413,37 @@
     ctx.fillRect(0, baseY, VIEW_W, VIEW_H - baseY);
   }
 
+  function drawBarrel(x, y, fuse) {
+    var flash = fuse >= 0 && Math.floor(fuse / 6) % 2 === 0;
+    ctx.fillStyle = '#05060d';
+    ctx.fillRect(x, y + 1, 12, 13);
+    ctx.fillStyle = flash ? '#fff3b0' : '#c85836';
+    ctx.fillRect(x + 1, y + 2, 10, 11);
+    ctx.fillStyle = '#f39958';
+    ctx.fillRect(x + 2, y + 2, 2, 10);
+    ctx.fillStyle = '#d6c6a2';
+    ctx.fillRect(x, y + 2, 12, 2);
+    ctx.fillRect(x, y + 11, 12, 2);
+    ctx.fillStyle = '#ffd93d';
+    ctx.fillRect(x + 4, y + 5, 5, 5);
+    ctx.fillStyle = '#291b21';
+    ctx.fillRect(x + 6, y + 5, 1, 3);
+    ctx.fillRect(x + 6, y + 9, 1, 1);
+    if (fuse >= 0) {
+      ctx.fillStyle = '#ffd93d';
+      ctx.fillRect(x + 5, y - 4, 2, 3);
+      ctx.fillStyle = '#fff3b0';
+      ctx.fillRect(x + 3, y - 3, 6, 1);
+    }
+  }
+
+  function drawHazards() {
+    hazards.barrels.forEach(function (b) {
+      if (!b.spent && b.x + b.w >= cam.x && b.x <= cam.x + VIEW_W &&
+          b.y + b.h >= cam.y && b.y <= cam.y + VIEW_H) { drawBarrel(b.x, b.y, b.fuse); }
+    });
+  }
+
   function drawTiles() {
     var pal = level.pal;
     var c0 = Math.max(0, Math.floor(cam.x / TILE) - 1);
@@ -3428,6 +3465,7 @@
             ctx.fillStyle = 'rgba(255,255,255,0.12)';
             ctx.fillRect(x, y, TILE, 1);
           }
+
           ctx.fillStyle = 'rgba(0,0,0,0.18)';
           ctx.fillRect(x, y + TILE - 2, TILE, 2);
           ctx.fillRect(x + TILE - 1, y, 1, TILE);
@@ -6615,6 +6653,7 @@
     ctx.translate(-Math.round(cam.x) + sx, -Math.round(cam.y) + sy);
 
     drawTiles();
+    drawHazards();
     drawHint();
     drawFlag();
     drawCoins();
@@ -6725,6 +6764,7 @@
     get weaponBoxes() { return weaponBoxes; },
     get hint() { return hint; },
     get shurikens() { return shurikens; },
+    get hazards() { return hazards; },
     get customPlaying() { return !!customLevel; },
     openEditor: openEditor,
     closeEditor: closeEditor,
@@ -6732,6 +6772,7 @@
     restartCustom: restartCustom,
     returnToEditor: returnToEditor,
     editorPalette: function (world) { return PALETTES[WORLDS[world].pal]; },
+    drawBarrel: drawBarrel,
     hintTrail: hintTrail,
     worlds: WORLDS,
     weapons: WEAPONS,
