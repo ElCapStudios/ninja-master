@@ -46,6 +46,85 @@ Tap **PAUSE** or **MENU** at the top to pause. You can resume, restart the
 level, or return to the map. The game also pauses when you leave its tab.
 It waits for you to resume, so switching apps cannot cost you a heart.
 
+## Make a level
+
+Choose **MAKE LEVEL** at the top of the title or map screen.
+You start with a safe floor, one Start and one Flag.
+The editor uses the same tiles and world colors as the game.
+
+1. Pick a tile, then tap or drag on the grid to paint. **Erase** removes tiles.
+2. Choose a world and give your level a name.
+3. Choose **Level 1**, **Level 2** or **Level 3**, then **Save draft**.
+4. Choose **Test level**. Use the normal touch buttons or keyboard to play.
+5. Choose **EDIT LEVEL** to return to the same draft. **TRY AGAIN** resets
+   the test. Pause also has restart and **BACK TO EDITOR**.
+
+The grid has **24 columns and 17 rows**. It does not resize.
+**Start** and **Flag** move when you place them again, so each has one spot.
+Put both on a floor or ladder, away from the top and side edges.
+The editor has 20 tile tools. A test can have up to 3 gems, 16 zombies,
+16 barrels, 16 falling blocks and 64 items in all, so it stays small for older tablets.
+
+On a small phone, turn **Move view** on to scroll the grid, then turn it off
+to paint. Each tile stays at least 24 pixels wide. **Undo** brings back the
+last change or whole paint stroke. It keeps up to 30 changes, including a
+loaded slot or **Fresh floor**.
+
+With a keyboard, use Tab to focus the grid. Arrows move the yellow box.
+Space or Enter paints. Delete or Backspace erases. Ctrl+Z (Command+Z on a Mac)
+undoes. Tab also reaches the tile tools, settings and save buttons.
+Escape returns to the game menu without losing the open draft.
+
+Drafts stay in this browser on this device. Save before closing the page.
+A saved draft can be unfinished. **Load slot** restores it after a page
+reload. Check the save message: full or blocked storage cannot keep a draft.
+Clearing browser data removes saved levels. There are no accounts, online
+sharing or import/export tools.
+
+Before a test, the editor checks the size, tile letters, theme, Start and
+Flag. It uses the campaign checker's movement rules to look for a path.
+**No clear path found** is a warning, not proof: the check can miss wall jumps
+and digging. Add ledges or ladders, or choose **Test anyway**.
+
+Test levels do not add campaign coins, gems, medals, shop items, best scores
+or unlocked levels. Death, retry, completion and exit all stay in test mode.
+Your campaign map choice and the `ninjaMasterSaveV2` save stay unchanged.
+Custom slots use separate keys, `ninjaMasterLevelSlot1` through
+`ninjaMasterLevelSlot3`. The old game in `/v1/` is unchanged.
+
+### Exploding barrels
+
+Shoot a marked red barrel with any weapon to light its fuse. Touching it
+does nothing. It flashes for at least 48 play ticks (0.8 seconds at 60 Hz)
+before it bursts. Pause and hit-stop freeze the fuse. Nearby barrels light
+their own full fuse, so you can watch a chain move along.
+
+The blast hurts foes and breaks only earth that the normal dig rules allow.
+It pushes the ninja but does not take a heart. Each barrel bursts once per
+try. A retry restores the original map. Green Start and Ice Slide have small
+chain examples. The game allows at most 24 barrels; editor drafts allow 16.
+No new button, save format, sound file or network service is needed.
+
+### Falling blocks
+
+Only tan blocks with a down arrow (`v`) can fall. Break the floor right under
+one with DIG or a blast. It shakes, flashes and drops dust for at least
+60 play ticks (one second at 60 Hz), then falls. Pause and hit-stop freeze
+the whole warning and fall. A block with bright corner bolts stays fixed:
+the terrain rules protect it as part of a safe route.
+
+A falling block crumbles on the first floor, foe, barrel or ninja it hits.
+It can hurt a foe or light a barrel, but only bounces the ninja up a little.
+It leaves no solid rubble, so it cannot seal a flag or crush a child.
+Death clears active falls and resets pending warnings and fuses. Retry
+restores every original tile and hazard. Log Hop and Ice Slide have examples,
+including barrels that can break a falling block's support.
+
+Custom hazard maps always show a warning before a test. The path check tries
+each trigger on its own and all triggers together, including the terrain
+states between blasts and falls. It checks the flag and gems, but it does not
+prove that every timing or dig pattern is safe. Test those paths yourself.
+
 ## Dig your own route
 
 Hold **C** or **DIG** to cut through earth and cracked walls. Digging has no
@@ -383,6 +462,13 @@ reports any spot you could fall into and not get out of.
 It also checks full excavation and three fixed partial blast patterns in
 every level. The flag, keys and gems must still be in reach, with no trapped
 spots. `terrain.js` holds the same protection rules used by the game.
+For hazard maps, it also runs every subset of barrel triggers and removable
+falling-block supports under each of those four patterns. It checks each
+changed terrain state, not just the final map, with the original protection
+mask. The current three example maps use 80 simulations and 175 terrain
+states. The checker allows at most 6 hazards in a campaign map and stops a
+simulation after 4096 play ticks. These are bounded path checks, not a proof
+of every live movement, enemy timing or possible dig order.
 
 Check the game controls, saves and combat too:
 
@@ -423,6 +509,8 @@ of height.
 | `+` | locked door |
 | `k` | key |
 | `T` | spring |
+| `e` | exploding barrel |
+| `v` | falling block (only after its support is removed) |
 | `o` | coin |
 | `g` | hidden gem |
 | `P` | where the ninja starts |
@@ -517,8 +605,62 @@ power up, a weapon or a tile.
     reach it.
 
 `node tools\genlevels.cjs` builds `levels.js` and checks all of these.
-`node tools\checklevels.cjs` checks them again on its own. Never edit
-`levels.js` by hand.
+`node tools\checklevels.cjs` checks them again. Its movement rules are shared
+with the local editor in `level-rules.js`; the generator keeps its own model.
+Never edit `levels.js` by hand.
+
+### Editor and game checks
+
+Run these from the project folder. They need only Node.js:
+
+```sh
+node tools/checkgame.cjs
+node tools/checklevels.cjs
+node tools/checkeditor.cjs
+```
+
+The editor check covers paint, erase, saved data, limits and storage errors.
+It also compares the shared movement rules with the independent generator on
+every campaign tile. The game check covers custom rewards, death, replay,
+pause, exit and returning to campaign play.
+Hazard checks cover all eight weapons, expired and enemy-hit blasts, full
+fuses, single detonation, chain bounds, terrain protection, block support,
+warning time, solid impacts, player and foe effects, death and pause.
+The editor includes a safe control and a falling bridge that loses its path.
+
+To run the new game checks on the recorded old game source:
+
+```sh
+GAME_SOURCE_REF=893cab36848dd6b0437a99e369bd6335a8bfa295 node tools/checkgame.cjs
+GAME_SOURCE_REF=96a88c9b7e5e076ee76ca77fac83e218110c2662 node tools/checkgame.cjs
+```
+
+The editor base passes the 28 old game checks and fails the 9 hazard checks.
+The barrels checkpoint fails the 5 falling-block checks. The current game
+must pass all 37. The current test harness and helper modules stay loaded
+for these controls, so failure means missing game behavior, not a missing file.
+
+For browser checks, use an installed Playwright package with its Chromium
+and WebKit browsers:
+
+```sh
+node tools/checkeditor-browser.cjs
+```
+
+If Playwright is installed outside this folder, set `PLAYWRIGHT_MODULE` to
+its module path. Set `EDITOR_ARTIFACTS` to choose where screenshots and the
+result JSON go. The check runs desktop and five touch screen sizes in both
+browsers, using `file://index.html`. Playwright is a test tool, not a game
+dependency. It also checks the actual hazard sprite pixels in the editor,
+shots from keyboard and touch, visible fall timing, chains, retry and reload.
+Jump checks record real input and the first upward motion, including a spent
+jump. They also run with 100ms render frames and reject blocked keyboard and
+touch input. Failure output includes play ticks, player and input state,
+focus and visibility. To run only these jump controls in both browsers:
+
+```sh
+node tools/checkeditor-browser.cjs --jump-only
+```
 
 ## Handy tricks for testing
 
@@ -551,13 +693,15 @@ NINJA.menuHits             // every tap box on the menu you are looking at
 NINJA.menu                 // menu.wsel is the cursor on the world screen
 ```
 
-To see the game loop run at full speed in a headless browser you must replace
-`requestAnimationFrame` with `setTimeout`. A headless browser only draws about
-2 frames a second, so every timing test is wrong without it.
+Browser frame rates vary. One render frame can run up to five 60Hz play
+ticks, so a fixed count of render frames is not a fixed count of play ticks.
+Observe short actions before sending input, rather than checking velocity
+after a fixed wait. Keep real browser timing for warning-duration checks.
 
 ## Run it on your own computer
 
-You need a small web server, because browsers block local files.
+Open `index.html` directly in a browser. The game and editor also work from
+a small local web server:
 
 ```powershell
 cd C:\Users\erinels\ninja-master
@@ -573,10 +717,17 @@ Then open http://localhost:8000 in a browser.
 | `index.html` | The page, and the touch buttons |
 | `style.css` | How everything looks and where the buttons sit |
 | `game.js` | The game: moving, jumping, enemies, weapons, bosses, menus, drawing |
+| `hazards.js` | Bounded barrel fuses, warned falling blocks and shared hazard simulation |
 | `terrain.js` | Shared rules for earth, firm ledges and safe digging |
+| `level-editor.js`, `level-editor.css` | The touch and keyboard level editor |
+| `level-data.js` | Bounded custom maps, validation and three local save slots |
+| `level-rules.js` | Conservative movement model shared by the editor and checker |
 | `levels.js` | The level maps. Made by the helper, do not edit |
 | `tools/genlevels.cjs` | Builds `levels.js` out of chunks and checks the rules |
 | `tools/checklevels.cjs` | Reads `levels.js` back and plays every level with a robot |
+| `tools/checkgame.cjs` | Checks game behavior and campaign save safety |
+| `tools/checkeditor.cjs` | Checks custom maps and compares both movement models |
+| `tools/checkeditor-browser.cjs` | Checks the editor in Chromium and WebKit |
 | `v1/` | The first version of the game, kept exactly as it was |
 
 ## Versions

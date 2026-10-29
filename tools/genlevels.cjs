@@ -44,7 +44,7 @@ const MAXDX_WALL = [0, 3, 3, 2];
 const SPRING_RISE = 6;   // a spring lifts 7.6 rows, we only trust 6
 const SPRING_DX = 2;
 
-const SOLID_SET = '#=T/';
+const SOLID_SET = '#=T/v';
 
 // ---------------------------------------------------------------------------
 // the letters
@@ -74,7 +74,7 @@ const WEAPONS = ['1', '2', '3', '4', '5', '6', '7'];
 const CORE_WEAPONS = ['1', '2', '3', '4', '5', '6'];
 const CORE_WEAPON_CH = '123456';
 const ALL_WEAPON_CH = '1234567';
-const LEGAL = '.#=^~T%+|/PFoHM*BRkg' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
+const LEGAL = '.#=^~T%+|/PFoHM*BRkgev' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 
 // lava and deep water belong only to Fire Keep and Deep Cave
 const LAVA_WORLDS = [3, 6];
@@ -157,7 +157,7 @@ function makeSolver(rows) {
     return rows[y][x];
   }
   function solidCh(c, key) {
-    return c === '#' || c === '=' || c === 'T' || c === '/' || (c === '+' && !key);
+    return c === '#' || c === '=' || c === 'T' || c === '/' || c === 'v' || (c === '+' && !key);
   }
   function solid(x, y, key) { return solidCh(at(x, y), key); }
   function free(x, y, key) {
@@ -1555,6 +1555,33 @@ function build() {
 }
 
 const levels = build();
+/* Optional toys beside the route, not replacements for any old tile. */
+for (const [index, points] of [[0, [[17, 13], [19, 13]]], [7, [[7, 13], [9, 13]]]]) {
+  const grid = toGrid(levels[index].rows);
+  for (const [x, y] of points) {
+    if (grid[y][x] !== '.') { throw Error('Barrel example overlaps an existing tile at ' + index + ':' + x + ',' + y); }
+    grid[y][x] = 'e';
+  }
+  levels[index].rows = gridRows(grid);
+  const problems = checkLevel(levels[index]);
+  if (problems.length) { throw Error('Barrel example: ' + problems.join('; ')); }
+}
+for (const [index, x] of [[1, 7], [7, 8]]) {
+  const grid = toGrid(levels[index].rows);
+  for (const [y, ch] of [[11, 'v'], [12, '/']]) {
+    if (grid[y][x] !== '.') { throw Error('Falling example overlaps an existing tile at ' + index + ':' + x + ',' + y); }
+    grid[y][x] = ch;
+  }
+  if (index === 1) {
+    for (const bx of [6, 8]) {
+      if (grid[13][bx] !== '.') { throw Error('Mixed hazard example overlaps an existing tile.'); }
+      grid[13][bx] = 'e';
+    }
+  }
+  levels[index].rows = gridRows(grid);
+  const problems = checkLevel(levels[index]);
+  if (problems.length) { throw Error('Falling example: ' + problems.join('; ')); }
+}
 
 // one max up per world at most
 for (let world = 0; world < 8; world++) {

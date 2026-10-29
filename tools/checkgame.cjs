@@ -62,6 +62,11 @@ function game(save) {
   vm.runInContext(source('levels.js'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'terrain.js'), 'utf8'), context);
   sandbox.NinjaTerrain = win.NinjaTerrain;
+  vm.runInContext(fs.readFileSync(path.join(root, 'hazards.js'), 'utf8'), context);
+  sandbox.NinjaHazards = win.NinjaHazards;
+  for (const file of ['level-rules.js', 'level-data.js']) {
+    vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
+  }
   const exports = `window.CHECK = {
     update: update, render: render, goMode: goMode, startLevel: startLevel,
     updatePlayer: updatePlayer, doJump: doJump, resolveY: resolveY, drawNinja: drawNinja,
@@ -69,6 +74,11 @@ function game(save) {
     doBlast: doBlast, damageEnemy: damageEnemy, enemyShoot: enemyShoot,
     updateEnemies: updateEnemies, respawn: respawnAtSafeSpot,
     doThrow: doThrow, updateShurikens: updateShurikens,
+    makeShot: makeShot, spotIsSafe: spotIsSafe,
+    hitByBlock: typeof hitByBlock === 'function' ? hitByBlock : null,
+    crumbleBlock: typeof crumbleBlock === 'function' ? crumbleBlock : null,
+    killPlayer: killPlayer, gameOver: gameOver, bankRun: bankRun, saveBest: saveBest, saveProgress: saveProgress,
+    markGem: markGem, awardMedals: awardMedals, unlockUpTo: unlockUpTo,
     get safeSpot() { return safeSpot; }, get spawn() { return spawn; },
     get bones() { return bones; }, get particles() { return particles; }
   };`;
@@ -123,12 +133,345 @@ function oldFlight(speed, held) {
 }
 
 const tests = {
+  'only marked unsupported blocks fall after at least 60 warning ticks, for keyboard and touch': function () {
+    for (const touch of [false, true]) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling blocks must be loaded into live state');
+      const b = g.n.hazards.blocks[0], p = g.n.player;
+      g.tick(80);
+      assert.equal(b.phase, 'idle', 'solid support keeps a marked block still');
+      assert.equal(g.n.level.grid[11][8], 'v');
+      p.x = 8 * 16 + 3; p.y = 13 * 16 + 1; p.vx = p.vy = 0;
+      if (touch) {
+        g.n.input.up = true; g.node('btn-dig').fire('pointerdown'); g.tick();
+        g.node('btn-dig').fire('pointerup'); g.n.input.up = false;
+      } else {
+        g.win.fire('keydown', { code: 'ArrowUp' }); g.win.fire('keydown', { code: 'KeyC' });
+        g.tick();
+        g.win.fire('keyup', { code: 'KeyC' }); g.win.fire('keyup', { code: 'ArrowUp' });
+      }
+      assert.equal(g.n.level.grid[12][8], '.', 'actual DIG removes the support');
+      assert.equal(b.phase, 'idle', 'dig starts a fresh warning on the next play tick');
+      p.x = 2 * 16 + 3;
+      g.tick(); assert.equal(b.phase, 'warning'); assert.equal(b.warning, 60);
+      assert.equal(g.t.spotIsSafe(8 * 16 + 3, 13 * 16 + 1), false, 'no checkpoint below a possible fall');
+      g.tick(59);
+      assert.equal(b.phase, 'warning'); assert.equal(b.warning, 1); assert.equal(b.y, 176);
+      assert.equal(g.n.level.grid[11][8], 'v', 'warning block stays solid');
+      g.tick(); assert.equal(b.phase, 'fall'); assert.equal(b.y, 176);
+      assert.equal(g.n.level.grid[11][8], '.');
+      g.tick(30);
+      assert.equal(b.phase, 'spent'); assert.equal(b.y + b.h, 14 * 16, 'swept floor collision, not tunnelling');
+      assert.equal(g.n.level.grid[14][8], '#', 'no impact carving or permanent rubble');
+      assert.equal(g.n.level.grid[14][7], '#', 'old earth never falls');
+      assert.equal(draft.rows[11][8], 'v', 'draft is not changed by test physics');
+    }
+  },
+  'falling warnings and motion freeze on pause and hit-stop, and reset safely on death and retry': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 11, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+    g.t.breakBlock(8, 12); g.tick();
+    const b = g.n.hazards.blocks[0], barrel = g.n.hazards.barrels[0];
+    g.win.NinjaHazards.arm(barrel);
+    g.key('KeyP'); const snapshot = JSON.stringify(g.n.hazards);
+    g.tick(100); assert.equal(JSON.stringify(g.n.hazards), snapshot);
+    g.key('Escape');
+    g.n.game.hitStop = 5; g.tick(5); assert.equal(JSON.stringify(g.n.hazards), snapshot);
+    for (let i = 0; i < 100 && b.phase !== 'fall'; i++) g.tick();
+    assert.equal(b.phase, 'fall', 'warning finishes after play ticks, not hit-stop ticks');
+    g.n.game.hitStop = 0; g.key('KeyP'); const y = b.y;
+    g.tick(60); assert.equal(b.y, y, 'pause stops moving blocks too');
+    g.key('Escape');
+    g.t.killPlayer(); g.tick(56);
+    assert.equal(b.phase, 'spent', 'death clears an active fall rather than restoring it on the ninja');
+    assert.equal(g.n.game.mode, 'play');
+    g.n.restartCustom();
+    assert.equal(g.n.hazards.blocks[0].phase, 'idle');
+    assert.equal(g.n.hazards.barrels[0].fuse, -1);
+    assert.equal(g.n.level.grid[12][8], '/');
+    g.t.breakBlock(8, 12); g.tick(); g.t.killPlayer(); g.tick(56);
+    assert.equal(g.n.hazards.blocks[0].phase, 'idle', 'death resets a pending warning');
+    g.tick(); assert.equal(g.n.hazards.blocks[0].warning, 60, 'surviving unsupported tiles give a fresh full warning');
+  },
+  'falling impacts use shared enemy damage and safely bounce the ninja, with no solid deposits': function () {
+    for (const target of ['foe', 'ninja', 'barrel', 'ledge', 'door', 'earth', 'falling', 'cracked', 'spring']) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 8, 8, 'v'); data.paint(draft, 8, 9, '/');
+      if (target === 'barrel') data.paint(draft, 8, 13, 'e');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+      const h = g.win.NinjaHazards, state = g.n.hazards, b = state.blocks[0], grid = g.n.level.grid;
+      const player = g.n.player, hearts = g.n.game.hearts;
+      let foe;
+      if (target === 'foe') {
+        foe = { x: 8 * 16, y: 13 * 16, w: 14, h: 16, hp: 2, maxHp: 2, alive: true };
+        g.n.enemies.push(foe);
+      } else if (target === 'ninja') {
+        player.x = 8 * 16 + 3; player.y = 13 * 16 + 1;
+      } else if (target !== 'barrel') {
+        grid[12][8] = ({ ledge: '=', door: '+', earth: '#', falling: 'v', cracked: '/', spring: 'T' })[target];
+      }
+      g.t.breakBlock(8, 9);
+      for (let i = 0; i < 160 && b.phase !== 'spent'; i++) h.fall(state, grid, g.t.hitByBlock, g.t.crumbleBlock);
+      assert.equal(b.phase, 'spent', target + ': crumbles at first contact');
+      assert.equal(grid[8][8], '.');
+      if (target === 'foe') assert.equal(foe.alive, false, 'actual damageEnemy path');
+      if (target === 'ninja') assert.ok(player.vy < 0, 'safe bounce, not crushing');
+      if (target === 'barrel') assert.equal(state.barrels[0].fuse, 48, 'impact arms a full fuse');
+      if (['ledge', 'door', 'earth', 'falling', 'cracked', 'spring'].includes(target)) {
+        assert.equal(b.y + 16, 12 * 16, target + ': lands exactly on solid top');
+        assert.notEqual(grid[12][8], '.', 'impact does not change the solid');
+      }
+      assert.equal(g.n.game.hearts, hearts);
+    }
+  },
+  'barrel blasts remove supports, protected falling blocks stay fixed, and chains settle within bounds': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 7, 13, 'e');
+    data.paint(draft, 2, 14, 'v');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'falling state must exist');
+    const h = g.win.NinjaHazards, state = g.n.hazards, block = state.blocks[0], anchored = state.blocks[1];
+    assert.ok(anchored.anchored, 'spawn footing is protected even when marked');
+    g.t.breakBlock(2, 15);
+    h.arm(state.barrels[0]);
+    for (let i = 0; i < 48; i++) h.tick(state, g.t.doBlast);
+    assert.equal(g.n.level.grid[12][8], '.', 'real barrel blast carves support');
+    h.fall(state, g.n.level.grid);
+    assert.equal(block.warning, 60, 'blast cannot skip the fall warning');
+    for (let i = 0; i < 120; i++) h.fall(state, g.n.level.grid);
+    assert.equal(anchored.phase, 'idle'); assert.equal(g.n.level.grid[14][2], 'v');
+    assert.equal(block.phase, 'spent');
+    const rows = draft.rows.map(row => row.replace('P', '.'));
+    const simulation = h.simulate(rows, g.n.level.protected, 1);
+    assert.equal(simulation.detonations, 1); assert.ok(simulation.ticks < 4096);
+    assert.equal(simulation.rows[11][8], '.');
+    assert.ok(simulation.snapshots.some(rows => rows[11][8] === 'v' && rows[12][8] === '.'),
+      'checker sees the warning geometry before the block is removed');
+    assert.equal(h.create(['v'.repeat(24)]).blocks.length, 24, 'clean engine limit control');
+    assert.throws(() => h.create(['v'.repeat(25)]), /at most 24 falling/);
+  },
+  'all eight weapons light barrels, with a full fuse and no touch trigger': function () {
+    for (const weapon of ['star', 'shotgun', 'rocket', 'flame', 'laser', 'boomerang', 'bombs', 'ice']) {
+      const g = game({ v: 4, buys: { ice: 1 } }), data = g.win.NinjaLevelData;
+      const draft = data.template(); data.paint(draft, 8, 13, 'e');
+      g.n.openEditor(); assert.equal(g.n.playCustom(draft).error, undefined);
+      assert.ok(g.n.hazards, 'hazard state must be loaded from the map');
+      const b = g.n.hazards.barrels[0], p = g.n.player;
+      p.x = b.x; p.y = b.y - 1; g.tick(3);
+      assert.equal(b.fuse, -1, weapon + ': walking through is safe');
+      p.x = 2 * 16 + 3;
+      g.n.shurikens.push(g.t.makeShot(weapon, b.x - 3, b.y + 3, 3, 0));
+      g.t.updateShurikens();
+      assert.equal(b.fuse, 48, weapon + ': real shot arms the barrel');
+      const enemy = g.n.enemies[0] || { x: b.x + 14, y: b.y, w: 12, h: 14,
+        alive: true, hp: 3, maxHp: 3, color: '#ffffff' };
+      g.n.enemies.push(enemy);
+      g.n.game.hitStop = 0;
+      for (let i = 0; i < 47; i++) g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(b.spent, false, 'no early detonation');
+      assert.equal(enemy.hp, 3);
+      g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(b.spent, true);
+      assert.equal(enemy.alive, false, 'real shared blast kills a nearby foe');
+      const score = g.n.game.score;
+      for (let i = 0; i < 100; i++) g.win.NinjaHazards.tick(g.n.hazards, g.t.doBlast);
+      assert.equal(g.n.game.score, score, 'spent barrels cannot detonate twice');
+    }
+  },
+  'expired bombs and rockets and enemy-hit blasts also arm nearby barrels': function () {
+    for (const weapon of ['bombs', 'rocket']) for (const path of ['expiry', 'enemy']) {
+      const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+      data.paint(draft, 10, 13, 'e'); data.paint(draft, 9, 13, 'Z');
+      g.n.openEditor(); g.n.playCustom(draft);
+      assert.ok(g.n.hazards, 'barrel state must exist');
+      const shot = g.t.makeShot(weapon, 9 * 16, 13 * 16 + 4, 0, 0);
+      if (path === 'expiry') shot.life = 1;
+      g.n.shurikens.push(shot); g.t.updateShurikens();
+      assert.equal(g.n.hazards.barrels[0].fuse, 48, weapon + ' ' + path + ' blast arms the barrel without a direct hit');
+      assert.equal(g.n.shurikens.length, 0);
+    }
+  },
+  'real custom hazard chains, falls, death and retry leave campaign bytes and memory unchanged': function () {
+    const g = game({ v: 4, max: 19, best: 700, coins: 230, buys: { ice: 1 }, gems: { 0: 7 }, medals: { 0: 5 } });
+    const data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 11, 'v'); data.paint(draft, 8, 12, '/'); data.paint(draft, 7, 13, 'e');
+    data.paint(draft, 9, 13, 'e'); data.paint(draft, 10, 13, 'Z');
+    const progress = JSON.stringify(g.n.progress), bytes = g.storage.get('ninjaMasterSaveV2');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards && g.n.hazards.blocks, 'mixed hazards must exist');
+    g.n.shurikens.push(g.t.makeShot('star', 7 * 16, 13 * 16 + 4, 0, 0));
+    g.t.updateShurikens(); g.tick(250);
+    assert.ok(g.n.hazards.barrels.every(b => b.spent));
+    assert.equal(g.n.hazards.blocks[0].phase, 'spent');
+    assert.equal(g.n.enemies[0].alive, false); assert.ok(g.n.game.score > 0);
+    g.t.killPlayer(); g.tick(56); g.n.restartCustom(); g.n.returnToEditor(); g.n.closeEditor();
+    assert.equal(JSON.stringify(g.n.progress), progress);
+    assert.equal(g.storage.get('ninjaMasterSaveV2'), bytes);
+    assert.equal(draft.rows[11][8], 'v');
+  },
+  'barrel chains are bounded, ordered by full fuses, and use protected terrain': function () {
+    const g = game(), data = g.win.NinjaLevelData, h = g.win.NinjaHazards;
+    const draft = data.template();
+    for (const x of [6, 8, 10]) data.paint(draft, x, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards, 'barrels must be present in game state');
+    const state = g.n.hazards, grid = g.n.level.grid;
+    const mask = g.n.level.protected, before = grid.map(row => row.slice());
+    const b = state.barrels[2], p = g.n.player;
+    p.x = b.x + 15; p.y = b.y; p.vx = 0; p.vy = 0;
+    const hearts = g.n.game.hearts;
+    h.arm(b);
+    for (let i = 0; i < 48; i++) h.tick(state, g.t.doBlast);
+    assert.equal(state.barrels[1].fuse, 48, 'new chain link gets the full fuse in either list order');
+    assert.equal(state.barrels[1].spent, false);
+    assert.equal(g.n.game.hearts, hearts, 'blast pushes, never takes hearts');
+    assert.ok(p.vx > 0 && p.vy < 0);
+    assert.equal(grid[14][11], '.', 'unprotected earth is removed by real barrel blast');
+    for (let i = 0; i < 96; i++) h.tick(state, g.t.doBlast);
+    assert.ok(state.barrels.every(b => b.spent), 'chain completes');
+    for (let y = 0; y < grid.length; y++) for (let x = 0; x < grid[y].length; x++) {
+      if (mask[y][x]) assert.equal(grid[y][x], before[y][x], 'protected ' + x + ',' + y);
+    }
+    const rows = ['e'.repeat(h.barrelLimit)];
+    const full = h.create(rows); let depth = 0, maximum = 0, count = 0;
+    const blast = (x, y, radius) => { depth++; maximum = Math.max(maximum, depth); count++; h.ignite(full, x, y, radius); depth--; };
+    h.arm(full.barrels[0]);
+    for (let i = 0; i < 48 * 25; i++) h.tick(full, blast);
+    assert.equal(count, 24); assert.equal(maximum, 1, 'no recursive explosions');
+    assert.throws(() => h.create(['e'.repeat(25)]), /at most 24/);
+  },
+  'barrel fuse freezes during pause and hit-stop, and retry restores the draft': function () {
+    const g = game(), data = g.win.NinjaLevelData, draft = data.template();
+    data.paint(draft, 8, 13, 'e');
+    g.n.openEditor(); g.n.playCustom(draft);
+    assert.ok(g.n.hazards, 'barrels must exist');
+    const h = g.win.NinjaHazards, b = g.n.hazards.barrels[0];
+    h.arm(b);
+    g.n.game.hitStop = 4; g.tick(4); assert.equal(b.fuse, 48);
+    g.key('KeyP'); assert.equal(g.n.game.mode, 'paused');
+    g.tick(90); assert.equal(b.fuse, 48);
+    g.key('Escape'); g.tick();
+    assert.ok(b.fuse < 48);
+    g.n.restartCustom();
+    assert.equal(g.n.hazards.barrels[0].fuse, -1);
+    assert.equal(g.n.hazards.barrels[0].spent, false);
+    assert.equal(draft.rows[13][8], 'e');
+  },
   'old saves keep progress, shop items, gems and medals': function () {
     const save = { v: 4, max: 19, best: 700, gems: { 0: 7, 2: 3 }, coins: 230, spentGems: 4, buys: { ice: 1, heart: 2 }, medals: { 0: 5 } };
     const g = game(save);
     for (const k of Object.keys(save).filter(function (k) { return k !== 'v'; })) {
       assert.equal(JSON.stringify(g.n.progress[k]), JSON.stringify(save[k]), k);
     }
+  },
+  'custom maps validate before loading and never replace the campaign': function () {
+    const g = game(), data = g.win.NinjaLevelData;
+    const originalWidth = g.n.level.w;
+    assert.equal(typeof g.n.openEditor, 'function', 'level editor entry must exist in the game');
+    assert.ok(g.n.openEditor());
+    const invalid = data.template(); invalid.rows.pop();
+    assert.ok(g.n.playCustom(invalid).error);
+    assert.equal(g.n.game.mode, 'editor');
+    for (let world = 0; world < 8; world++) {
+      const draft = data.template(); draft.world = world;
+      assert.equal(g.n.playCustom(draft).error, undefined);
+      assert.equal(g.n.level.w, 24); assert.equal(g.n.level.h, 17);
+      assert.equal(g.n.level.world, world);
+      assert.equal(g.n.level.pal, g.n.editorPalette(world));
+      g.n.level.grid[14][6] = '.';
+      g.n.restartCustom();
+      assert.equal(g.n.level.grid[14][6], '#', 'retry restores the draft tiles');
+      assert.equal(draft.rows[14][6], '#', 'play never digs into the draft');
+      g.n.returnToEditor();
+      assert.equal(g.n.game.mode, 'editor');
+    }
+    g.n.closeEditor();
+    assert.equal(g.n.game.mode, 'title');
+    assert.equal(g.n.level.w, originalWidth, 'original campaign level stays intact');
+  },
+  'custom gems, coins, medals, unlocks, shop and best scores never write campaign data': function () {
+    const save = { v: 4, max: 19, best: 700, gems: { 0: 7 }, coins: 230, spentGems: 0,
+      buys: { ice: 1 }, medals: { 0: 5 } };
+    const g = game(save), data = g.win.NinjaLevelData;
+    assert.equal(typeof g.n.playCustom, 'function', 'custom play must exist');
+    const draft = data.template();
+    data.paint(draft, 3, 13, 'g'); data.paint(draft, 4, 13, 'o');
+    const raw = g.storage.get('ninjaMasterSaveV2'), progress = JSON.stringify(g.n.progress);
+    g.n.openEditor(); g.n.playCustom(draft);
+    function unchanged(label) {
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), raw, label + ': stored save is byte-for-byte unchanged');
+      assert.equal(JSON.stringify(g.n.progress), progress, label + ': no in-memory rewards');
+    }
+    g.n.player.x = 3 * 16 + 3; g.n.player.y = 13 * 16 + 1; g.tick();
+    assert.equal(g.n.gems[0].taken, true, 'collect a real custom gem');
+    unchanged('gem');
+    g.n.player.x = 4 * 16 + 3; g.n.player.y = 13 * 16 + 1; g.tick();
+    assert.ok(g.n.game.runCoins > 0, 'collect a real custom coin'); unchanged('coin');
+    g.n.game.score = 99999;
+    g.n.game.best = 99999; g.t.saveProgress(); unchanged('save guard'); g.n.game.best = 700;
+    g.t.markGem(1, 1); g.t.awardMedals(0, 7); g.t.unlockUpTo(48);
+    g.t.bankRun(); g.t.saveBest();
+    assert.equal(g.n.game.best, 700, 'custom scores do not change best score in memory');
+    assert.equal(g.n.buy('heart'), false);
+    g.n.giveCoins(500); g.n.unlockAll(); g.n.wipeSave(); g.n.openShop();
+    g.n.goTo(47);
+    assert.equal(g.n.game.score, 99999, 'debug goTo cannot reset the custom run');
+    assert.equal(g.n.customPlaying, true, 'debug goTo cannot bypass the custom boundary');
+    assert.equal(g.n.game.mode, 'play');
+    unchanged('direct reward and debug paths');
+    g.n.player.x = g.n.flag.x; g.n.player.y = g.n.flag.y + 32;
+    g.n.player.vx = 0; g.n.player.vy = 0; g.tick();
+    assert.equal(g.n.game.mode, 'clear', 'real flag completion');
+    g.tick(150); assert.equal(g.n.game.mode, 'clear', 'never advance into campaign'); unchanged('clear');
+    g.key('Space'); assert.equal(g.n.game.mode, 'play'); unchanged('completion replay');
+    for (const mode of ['gameover', 'win']) {
+      g.t.goMode(mode); g.tick(150); unchanged(mode);
+      g.key('Space'); assert.equal(g.n.game.mode, 'play'); unchanged(mode + ' replay');
+    }
+    g.n.game.hearts = 1; g.t.killPlayer(); g.tick(60);
+    assert.equal(g.n.game.mode, 'gameover'); unchanged('death');
+    g.key('Escape'); assert.equal(g.n.game.mode, 'editor'); unchanged('exit after death');
+    g.n.closeEditor(); unchanged('back to game');
+  },
+  'custom pause, retry and all exits return to the same campaign selection': function () {
+    const g = game({ v: 4, max: 19, best: 700, coins: 230, buys: { heart: 2 } });
+    assert.equal(typeof g.n.openEditor, 'function', 'editor entry must exist');
+    g.n.goTo(8); g.t.goMode('levels');
+    const snapshot = JSON.stringify([g.n.game.level, g.n.game.score, g.n.game.hearts, g.n.game.maxHearts, g.n.game.best, g.n.menu.world, g.n.menu.level]);
+    const raw = g.storage.get('ninjaMasterSaveV2'), progress = JSON.stringify(g.n.progress);
+    const draft = g.win.NinjaLevelData.template();
+    for (const exit of ['direct', 'pause', 'menu', 'clear-back', 'gameover-back', 'win-back']) {
+      assert.ok(g.n.openEditor());
+      g.n.playCustom(draft);
+      assert.equal(g.n.game.maxHearts, 5);
+      assert.equal(g.n.openEditor(), false, 'cannot open a nested editor from play');
+      if (exit === 'direct') { g.n.returnToEditor(); }
+      else if (exit === 'pause' || exit === 'menu') {
+        g.node('btn-pause').fire('click'); g.tick();
+        g.tap('pause', 1); assert.equal(g.n.game.mode, 'play');
+        assert.equal(g.n.game.maxHearts, 5, 'pause restart stays in custom play');
+        g.node('btn-pause').fire('click'); g.tick();
+        if (exit === 'pause') { g.tap('pause', 2); }
+        else { g.node('btn-menu').fire('click'); }
+      } else {
+        g.t.goMode(exit.split('-')[0]); g.key('Escape');
+      }
+      assert.equal(g.n.game.mode, 'editor', exit);
+      g.n.closeEditor(); assert.equal(g.n.game.mode, 'levels', exit);
+      assert.equal(JSON.stringify([g.n.game.level, g.n.game.score, g.n.game.hearts, g.n.game.maxHearts, g.n.game.best, g.n.menu.world, g.n.menu.level]), snapshot, exit + ': resume state');
+      assert.equal(JSON.stringify(g.n.progress), progress);
+      assert.equal(g.storage.get('ninjaMasterSaveV2'), raw);
+    }
+    g.t.startLevel(8);
+    assert.equal(g.n.level.world, 1); assert.equal(g.n.customPlaying, false);
+    g.t.markGem(8, 0);
+    assert.ok(g.n.progress.gems[8] & 1, 'campaign saving still works after leaving custom play');
+    assert.notEqual(g.storage.get('ninjaMasterSaveV2'), raw);
   },
   'keyboard pause freezes the whole run and clears held input': function () {
     const g = game(); g.n.goTo(0); g.tick();
@@ -480,8 +823,10 @@ const tests = {
     for (const file of ['tools/checklevels.cjs', 'tools/genlevels.cjs']) {
       const code = source(file);
       const solverCode = code.slice(code.indexOf('function makeSolver('), code.indexOf('function analyse('));
-      const makeSolver = new Function('MAXDX_UP', 'MAXDX_WALL', 'SPRING_RISE', 'SPRING_DX',
-        solverCode + '\nreturn makeSolver;')([4, 3, 3, 2], [0, 3, 3, 2], 6, 2);
+      const makeSolver = file === 'tools/checklevels.cjs' && !code.includes('function makeSolver(') ?
+        require('../level-rules.js').makeSolver :
+        new Function('MAXDX_UP', 'MAXDX_WALL', 'SPRING_RISE', 'SPRING_DX',
+          solverCode + '\nreturn makeSolver;')([4, 3, 3, 2], [0, 3, 3, 2], 6, 2);
       const rows = Array.from({ length: 48 }, function () {
         const row = Array(32).fill('.'); row[6] = '#'; row[10] = '#'; return row;
       });
