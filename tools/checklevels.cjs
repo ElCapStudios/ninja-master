@@ -2,8 +2,8 @@
  * Checks levels.js on its own.
  *
  * It reads the file from disk, looks only at the letters in the maps, and
- * tests every rule again. It has its own copy of the solver, so it does not
- * trust anything the maker said. It prints one line for each level and stops
+ * tests every rule again. Its movement model is shared with the local editor,
+ * not the generator. It prints one line for each level and stops
  * with an error code if any line says FAIL.
  *
  * Run it with:  node tools\checklevels.cjs
@@ -14,6 +14,8 @@
 const fs = require('fs');
 const path = require('path');
 const terrain = require('../terrain.js');
+const hazards = require('../hazards.js');
+const makeSolver = require('../level-rules.js').makeSolver;
 
 const FILE = path.join(__dirname, '..', 'levels.js');
 
@@ -26,11 +28,7 @@ const ROOM_W = 15;
 const ROOM_H = 17;
 const RUN_FLOOR = 14;
 
-const MAXDX_UP = [4, 3, 3, 2];
-const MAXDX_WALL = [0, 3, 3, 2];
-const SPRING_RISE = 6;
-const SPRING_DX = 2;
-const SOLID_SET = '#=T/';
+const SOLID_SET = '#=T/v';
 
 const WORLD_NAMES = [
   'Green Woods', 'Frost Peak', 'Sand Tomb', 'Fire Keep',
@@ -48,7 +46,7 @@ const ALL_BOSS_CH = 'KJQDXb89';
 /* Weapon boxes. '7' is the ice gun. */
 const CORE_WEAPON_CH = '123456';
 const ALL_WEAPON_CH = '1234567';
-const LEGAL = '.#=^~T%+|/PFoHM*BRkg' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
+const LEGAL = '.#=^~T%+|/PFoHM*BRkgev' + ALL_WEAPON_CH + ALL_ENEMY_CH + ALL_BOSS_CH;
 const LAVA_WORLDS = [3, 6];
 
 // ---------------------------------------------------------------------------
@@ -112,110 +110,8 @@ function groupCount(grid, ch) {
 }
 
 // ---------------------------------------------------------------------------
-// the solver, written again here on purpose
+// independent campaign analysis using the shared movement model
 // ---------------------------------------------------------------------------
-
-function makeSolver(rows) {
-  const H = rows.length;
-  const W = rows[0].length;
-
-  function at(x, y) {
-    if (x < 0 || y < 0 || x >= W || y >= H) return '#';
-    return rows[y][x];
-  }
-  function solidCh(c, key) {
-    return c === '#' || c === '=' || c === 'T' || c === '/' || (c === '+' && !key);
-  }
-  function solid(x, y, key) { return solidCh(at(x, y), key); }
-  function free(x, y, key) {
-    if (x < 0 || y < 0 || x >= W || y >= H) return false;
-    const c = rows[y][x];
-    return !solidCh(c, key) && c !== '^' && c !== '~';
-  }
-  function ladder(x, y) { return at(x, y) === '|'; }
-  function rest(x, y, key) {
-    return free(x, y, key) && (solid(x, y + 1, key) || ladder(x, y));
-  }
-  function cling(x, y, key) {
-    if (!free(x, y, key)) return false;
-    if (solid(x, y + 1, key) || ladder(x, y)) return false;
-    return solid(x - 1, y, key) || solid(x + 1, y, key);
-  }
-  function pathOk(x, y, nx, ny, key, R) {
-    const top = y - R;
-    if (top < 0) return false;
-    for (let r = y - 1; r >= top; r--) if (!free(x, r, key)) return false;
-    const lo = Math.min(x, nx), hi = Math.max(x, nx);
-    const midLow = Math.min(y - 1, ny);
-    for (let mx = lo + 1; mx < hi; mx++) {
-      for (let r = top; r <= midLow; r++) if (!free(mx, r, key)) return false;
-    }
-    for (let r = top; r <= ny; r++) if (!free(nx, r, key)) return false;
-    return true;
-  }
-  function landing(x, y, key, nx, ny, R, push) {
-    if (!pathOk(x, y, nx, ny, key, R)) return;
-    if (rest(nx, ny, key)) push(nx, ny, 0);
-    else if (cling(nx, ny, key)) push(nx, ny, 1);
-  }
-  function moves(x, y, mode, key, push) {
-    if (mode === 0) {
-      if (rest(x - 1, y, key)) push(x - 1, y, 0);
-      if (rest(x + 1, y, key)) push(x + 1, y, 0);
-      if (ladder(x, y - 1) && free(x, y - 1, key)) push(x, y - 1, 0);
-      if (ladder(x, y) && ladder(x, y + 1)) push(x, y + 1, 0);
-      for (let u = 0; u <= 3; u++) {
-        const m = MAXDX_UP[u];
-        for (let dx = -m; dx <= m; dx++) {
-          if (dx === 0 && u === 0) continue;
-          const R = Math.max(u + 1, Math.abs(dx), 1);
-          landing(x, y, key, x + dx, y - u, R, push);
-        }
-      }
-      for (let d = -1; d <= 1; d += 2) {
-        for (let k = 1; k <= 4; k++) {
-          const nx = x + d * k;
-          if (k > 1 && !free(x + d * (k - 1), y, key)) break;
-          for (let ny = y + 1; ny < H; ny++) {
-            if (!free(nx, ny, key)) break;
-            if (rest(nx, ny, key) || cling(nx, ny, key)) {
-              landing(x, y, key, nx, ny, Math.max(k, 1), push);
-            }
-          }
-        }
-      }
-      if (at(x, y + 1) === 'T') {
-        for (let u = 1; u <= SPRING_RISE; u++) {
-          for (let dx = -SPRING_DX; dx <= SPRING_DX; dx++) {
-            const R = Math.max(u + 1, Math.abs(dx), 1);
-            landing(x, y, key, x + dx, y - u, R, push);
-          }
-        }
-      }
-      return;
-    }
-    const wallLeft = solid(x - 1, y, key);
-    const wallRight = solid(x + 1, y, key);
-    for (let rise = 1; rise <= 3; rise++) {
-      const m = MAXDX_WALL[rise];
-      for (let d = -1; d <= 1; d += 2) {
-        if (d < 0 && !wallRight) continue;
-        if (d > 0 && !wallLeft) continue;
-        for (let k = 1; k <= m; k++) {
-          landing(x, y, key, x + d * k, y - rise, Math.max(rise + 1, k), push);
-        }
-      }
-    }
-    for (let d = -1; d <= 1; d++) {
-      for (let ny = y + 1; ny < H; ny++) {
-        const nx = x + d;
-        if (!free(nx, ny, key)) break;
-        if (rest(nx, ny, key) || cling(nx, ny, key)) landing(x, y, key, nx, ny, 1, push);
-      }
-    }
-  }
-  return { W: W, H: H, at: at, moves: moves };
-}
 
 function analyse(rows, opts) {
   opts = opts || {};
@@ -617,6 +513,20 @@ function checkOne(level, index) {
     gems.concat(findAll(grid, 'k')).forEach(function (it) {
       if (!result.reachable(it.x, it.y)) say('dig pattern ' + pattern + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
     });
+    const hazardCount = findAll(grid, 'ev').length;
+    if (hazardCount > 6) { say('campaign hazard check allows up to 6 hazards per map'); continue; }
+    for (let triggers = 0; hazardCount && triggers < (1 << hazardCount); triggers++) {
+      const state = hazards.simulate(dug.map(r => r.join('')), mask, triggers);
+      for (const snapshot of state.snapshots) {
+        const route = analyse(snapshot);
+        const label = 'dig ' + pattern + ', hazards ' + triggers;
+        if (!route || !route.ok) { say(label + ' cuts off the flag'); continue; }
+        if (route.traps().length) say(label + ' creates a trap');
+        gems.concat(findAll(grid, 'k')).forEach(function (it) {
+          if (!route.reachable(it.x, it.y)) say(label + ' cuts off ' + it.ch + ' at ' + it.x + ',' + it.y);
+        });
+      }
+    }
   }
 
   if (kind === 'maze') {

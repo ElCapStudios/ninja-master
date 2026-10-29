@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Ninja Master</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="level-editor.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0d1a'/><rect x='4' y='3' width='8' height='4' fill='%23d63a3a'/><rect x='4' y='7' width='8' height='6' fill='%23222436'/><rect x='5' y='8' width='2' height='2' fill='%23ffffff'/><rect x='9' y='8' width='2' height='2' fill='%23ffffff'/></svg>">
 </head>
 <body>
@@ -40,6 +41,7 @@ FORM: Extend the existing game with the requested region map and level trail.
 
   <div id="topbar">
     <a class="tiny" href="v1/" aria-label="Play the old version">OLD GAME V1</a>
+    <button class="tiny" id="btn-editor">MAKE LEVEL</button>
     <button class="tiny" id="btn-pause" aria-label="Pause game" aria-pressed="false" hidden>PAUSE</button>
     <button class="tiny" id="btn-menu" aria-label="Open game menu">MENU</button>
     <button class="tiny" id="btn-customizer" aria-haspopup="dialog" aria-controls="customizer">MY NINJA</button>
@@ -79,9 +81,68 @@ FORM: Extend the existing game with the requested region map and level trail.
   </footer>
 </dialog>
 
+<!-- The maker keeps the game's dark world colors and gold marks.
+     The grid is the main surface. Choose a tile, paint, then test it.
+     Test-play returns to this same local draft, never to the campaign. -->
+<section id="level-editor" aria-labelledby="editor-heading" hidden>
+  <header class="editor-header">
+    <h1 id="editor-heading">Make a level</h1>
+    <div class="editor-actions">
+      <button id="editor-test" class="editor-primary">Test level</button>
+      <button id="editor-close">Back to game</button>
+    </div>
+  </header>
+  <p class="editor-intro">Pick a tile. Paint your world. Reach the red flag!</p>
+  <div class="editor-settings">
+    <label>Level name <input id="editor-name" maxlength="24" value="My level" autocomplete="off"></label>
+    <label>World <select id="editor-world"></select></label>
+  </div>
+  <div id="editor-palette" role="group" aria-label="Tiles"></div>
+  <div class="editor-actions editor-board-tools">
+    <button id="editor-pan" aria-pressed="false">Move view: off</button>
+    <button id="editor-undo" disabled>Undo</button>
+    <button id="editor-new">Fresh floor</button>
+    <span id="editor-brush">Brush: Earth</span>
+  </div>
+  <p id="editor-help" class="editor-help">Drag to paint. On a small screen, turn on Move view to scroll.
+    Keyboard: focus the grid, use arrows, then Space to paint. Delete erases. Ctrl+Z undoes.
+    Barrels flash when shot. Falling blocks shake for one second after their support breaks,
+    then crumble on impact. Bright corner bolts mean a block stays fixed to keep a route safe.</p>
+  <div id="editor-board">
+    <canvas id="editor-grid" width="768" height="544" tabindex="0" role="application"
+      aria-label="Level grid" aria-describedby="editor-help"></canvas>
+  </div>
+  <footer class="editor-storage">
+    <label>Device slot
+      <select id="editor-slot">
+        <option value="1">Level 1</option>
+        <option value="2">Level 2</option>
+        <option value="3">Level 3</option>
+      </select>
+    </label>
+    <button id="editor-save">Save draft</button>
+    <button id="editor-load">Load slot</button>
+    <strong id="editor-dirty">Draft not saved</strong>
+  </footer>
+  <p class="editor-local">Only on this device and browser. Save before you close the page. Undo can restore a loaded or fresh draft.</p>
+  <p id="editor-status" role="status" aria-live="polite"></p>
+  <div id="editor-warning" hidden>
+    <p id="editor-warning-text"></p>
+    <button id="editor-anyway">Test anyway</button>
+  </div>
+</section>
+<div id="custom-playbar" hidden aria-label="Test level controls">
+  <button id="custom-edit" class="tiny">EDIT LEVEL</button>
+  <button id="custom-retry" class="tiny">TRY AGAIN</button>
+</div>
+
 <script src="levels.js"></script>
 <script src="terrain.js"></script>
+<script src="hazards.js"></script>
+<script src="level-rules.js"></script>
+<script src="level-data.js"></script>
 <script src="customizer.js"></script>
 <script src="game.js"></script>
+<script src="level-editor.js"></script>
 </body>
 </html>

@@ -177,8 +177,12 @@
   var KEY_DOWN = { ArrowDown: 1, KeyS: 1 };
 
   window.addEventListener('keydown', function (e) {
-    if (window.NinjaLooks.isOpen() ||
-        ((e.code === 'Enter' || e.code === 'Space') && e.target === document.getElementById('btn-customizer'))) { return; }
+    if (game.mode === 'editor' || window.NinjaLooks.isOpen() ||
+        ((e.code === 'Enter' || e.code === 'Space') &&
+         ['btn-customizer', 'btn-editor', 'custom-retry', 'custom-edit',
+          'btn-pause', 'btn-menu', 'btn-sound', 'btn-full'].some(function (id) {
+            return e.target === document.getElementById(id);
+          }))) { return; }
     Sound.init();
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
@@ -473,6 +477,8 @@
   /* V2 keeps its own save, so the old V1 game in /v1/ never loses your place. */
   var SAVE_KEY = 'ninjaMasterSaveV2';
   var progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
+  var customLevel = null;
+  var editorReturn = null;
 
   function loadProgress() {
     try {
@@ -492,6 +498,7 @@
   }
 
   function saveProgress() {
+    if (customLevel) { return; }
     if (game.best > progress.best) { progress.best = game.best; }
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
@@ -542,6 +549,7 @@
   }
 
   function buyItem(it) {
+    if (customLevel) { return false; }
     if (canBuy(it) !== 'OK') { return false; }
     if (it.money === 'gem') { progress.spentGems += it.cost; }
     else { progress.coins -= it.cost; }
@@ -584,6 +592,7 @@
   }
   /* Returns the medals you won this try that you did not already have. */
   function awardMedals(levelIndex, won) {
+    if (customLevel) { return 0; }
     var had = medalsOf(levelIndex);
     var fresh = won & ~had;
     if (fresh) { progress.medals[levelIndex] = had | won; saveProgress(); }
@@ -602,6 +611,7 @@
     return n;
   }
   function markGem(levelIndex, slot) {
+    if (customLevel) { return false; }
     var s = gemsFound(levelIndex);
     if (s & (1 << slot)) { return false; }
     progress.gems[levelIndex] = s | (1 << slot);
@@ -615,6 +625,7 @@
   }
 
   function unlockUpTo(n) {
+    if (customLevel) { return; }
     if (n > progress.max) { progress.max = Math.min(n, LEVELS.length); saveProgress(); }
   }
 
@@ -646,6 +657,7 @@
   var gems = [];       /* the three hidden gems */
   var weaponBoxes = [];/* weapon boxes you can pick up */
   var blasts = [];     /* the round bang from a rocket or a bomb */
+  var hazards = null;
   var spawn = { x: 40, y: 40 };
   var safeSpot = { x: 40, y: 40 };
   var cam = { x: 0, y: 0 };
@@ -662,7 +674,7 @@
 
   /* A fake wall '%' is NOT solid. It only looks like rock.
      A door '+' is solid until you use a key on it. */
-  function isSolid(ch) { return ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '+'; }
+  function isSolid(ch) { return NinjaTerrain.solid(ch); }
 
   function tileAt(cx, cy) {
     if (cx < 0 || cx >= level.w) { return '#'; }
@@ -696,7 +708,7 @@
   /* A tile the arrow trail is allowed to go through. Walls, spikes, lava,
      a shut door and a secret wall all stop it. */
   function hintOpen(ch, haveKey) {
-    if (ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '%') { return false; }
+    if (ch === '#' || ch === '=' || ch === 'T' || ch === '/' || ch === '%' || ch === 'v') { return false; }
     if (ch === '+' && !haveKey) { return false; }
     if (ch === '^' || ch === '~') { return false; }
     return true;
@@ -855,9 +867,9 @@
   }
 
   function loadLevel(index) {
-    var def = LEVELS[index];
+    var def = customLevel || LEVELS[index];
     var rows = def.rows;
-    var w = worldOf(index);
+    var w = customLevel ? customLevel.world : worldOf(index);
     var info = WORLDS[w] || WORLDS[0];
     game.world = w;
     level = {
@@ -873,6 +885,7 @@
       kind: def.kind || 'run'
     };
     level.protected = NinjaTerrain.protection(rows, level.boss, level.kind);
+    hazards = NinjaHazards.create(rows, level.protected);
     level.damage = {};
     game.hitStop = 0;
     /* 'seen' remembers which fake walls you have already walked into,
@@ -905,7 +918,9 @@
     for (var r = 0; r < level.h; r++) {
       for (var c = 0; c < level.w; c++) {
         var ch = level.grid[r][c];
-        if (ch === 'P') {
+        if (ch === 'e') {
+          level.grid[r][c] = '.';
+        } else if (ch === 'P') {
           spawn = { x: c * TILE + 3, y: r * TILE + 1 };
           level.grid[r][c] = '.';
         } else if (ch === 'o') {
@@ -999,6 +1014,7 @@
      or the ninja lands and dies again straight away. */
   function spotIsSafe(x, y) {
     var box = { x: x, y: y, w: player.w, h: player.h };
+    if (NinjaHazards.threatens(hazards, box)) { return false; }
     if (x < 0 || x + box.w > level.pxW || y < 0 || y + box.h > level.pxH) { return false; }
     for (var by = Math.floor(y / TILE); by <= Math.floor((y + box.h - 1) / TILE); by++) {
       for (var bx = Math.floor(x / TILE); bx <= Math.floor((x + box.w - 1) / TILE); bx++) {
@@ -1019,6 +1035,7 @@
   }
 
   function respawnAtSafeSpot() {
+    NinjaHazards.reset(hazards);
     if (!spotIsSafe(safeSpot.x, safeSpot.y)) { safeSpot.x = spawn.x; safeSpot.y = spawn.y; }
     player.x = safeSpot.x;
     player.y = safeSpot.y;
@@ -1401,6 +1418,7 @@
 
   /* The round bang hurts nearby foes and carves unprotected earth. */
   function doBlast(x, y, radius, dmg) {
+    NinjaHazards.ignite(hazards, x, y, radius);
     hitStop(5);
     blasts.push({ x: x, y: y, r: 4, max: radius, t: 0 });
     game.shake = Math.max(game.shake, 10);
@@ -1413,16 +1431,7 @@
       if (dx * dx + dy * dy < radius * radius) { damageEnemy(e, dmg, 'blast'); }
     }
     /* Tile centres keep the hole round rather than clearing a square. */
-    var c0 = Math.floor((x - radius) / TILE), c1 = Math.floor((x + radius) / TILE);
-    var r0 = Math.floor((y - radius) / TILE), r1 = Math.floor((y + radius) / TILE);
-    for (var cy = r0; cy <= r1; cy++) {
-      if (cy < 0 || cy >= level.h) { continue; }
-      for (var cx = c0; cx <= c1; cx++) {
-        if (cx < 0 || cx >= level.w) { continue; }
-        var bx = cx * TILE + 8 - x, by = cy * TILE + 8 - y;
-        if (bx * bx + by * by <= (radius + 6) * (radius + 6)) { breakBlock(cx, cy); }
-      }
-    }
+    NinjaTerrain.blastCells(level.grid, x, y, radius, breakBlock);
     /* The bang pushes the ninja too, but it never hurts you. */
     var pdx = (player.x + 5) - x, pdy = (player.y + 7) - y;
     var d2 = pdx * pdx + pdy * pdy;
@@ -1634,6 +1643,7 @@
   }
 
   function saveBest() {
+    if (customLevel) { return; }
     if (game.score > game.best) { game.best = game.score; }
     saveProgress();
   }
@@ -1641,7 +1651,7 @@
   /* ---------------- update ---------------- */
 
   function update() {
-    if (window.NinjaLooks.isOpen()) { return; }
+    if (game.mode === 'editor' || window.NinjaLooks.isOpen()) { return; }
     if (pauseEdge && (game.mode === 'play' || game.mode === 'paused')) {
       setPaused(game.mode === 'play');
       return;
@@ -1686,11 +1696,61 @@
   function syncControls() {
     var playing = game.mode === 'play';
     document.body.classList.toggle('playing', playing);
+    document.body.classList.toggle('custom-testing', !!customLevel);
     pauseBtn.hidden = !playing && game.mode !== 'paused';
     pauseBtn.textContent = game.mode === 'paused' ? 'RESUME' : 'PAUSE';
     pauseBtn.setAttribute('aria-label', game.mode === 'paused' ? 'Resume game' : 'Pause game');
     pauseBtn.setAttribute('aria-pressed', String(game.mode === 'paused'));
     document.getElementById('btn-customizer').hidden = !isMenuMode();
+    var editorBtn = document.getElementById('btn-editor');
+    editorBtn.hidden = ['title', 'worlds', 'levels'].indexOf(game.mode) < 0;
+    document.getElementById('custom-playbar').hidden = !customLevel;
+  }
+
+  function openEditor() {
+    if (['title', 'worlds', 'levels'].indexOf(game.mode) < 0 || customLevel) { return false; }
+    editorReturn = { game: Object.assign({}, game), menu: Object.assign({}, menu) };
+    goMode('editor');
+    return true;
+  }
+
+  function closeEditor() {
+    if (!editorReturn || customLevel) { return; }
+    var mode = editorReturn.game.mode;
+    Object.assign(game, editorReturn.game);
+    Object.assign(menu, editorReturn.menu);
+    editorReturn = null;
+    goMode(mode);
+  }
+
+  function playCustom(draft) {
+    if (!editorReturn || (game.mode !== 'editor' && !customLevel)) { return { error: 'Open the level editor first.' }; }
+    var checked = window.NinjaLevelData.validate(draft, true);
+    if (checked.error) { return checked; }
+    customLevel = checked.value;
+    customLevel.kind = 'run';
+    restartCustom();
+    return checked;
+  }
+
+  function restartCustom() {
+    if (!customLevel) { return; }
+    game.score = 0;
+    game.maxHearts = START_HEARTS;
+    game.hearts = START_HEARTS;
+    loadLevel(game.level);
+    goMode('play');
+  }
+
+  function returnToEditor() {
+    if (!customLevel || !editorReturn) { return; }
+    customLevel = null;
+    Object.assign(game, editorReturn.game);
+    Object.assign(menu, editorReturn.menu);
+    loadLevel(game.level);
+    Object.assign(game, editorReturn.game);
+    goMode('editor');
+    if (window.NinjaLevelEditor) { window.NinjaLevelEditor.show('Back to your draft. Test-play does not save changes to tiles.'); }
   }
 
   function setPaused(paused) {
@@ -1710,6 +1770,7 @@
   }
 
   function leaveLevel() {
+    if (customLevel) { returnToEditor(); return; }
     menu.world = worldOf(game.level);
     menu.level = game.level - firstLevelOf(menu.world);
     goMode('levels');
@@ -1728,6 +1789,7 @@
   /* You win the level, so your coins go in the bank and you get your
      medals. This runs once, on the first frame of the clear screen. */
   function bankRun() {
+    if (customLevel) { return; }
     var idx = game.level;
     progress.coins += game.runCoins;
     var won = 0;
@@ -1750,6 +1812,14 @@
     if (game.mode === 'code') { return updateCodeScreen(); }
     if (game.mode === 'shop') { return updateShop(); }
     if (game.mode === 'worldclear') { return updateWorldClear(); }
+
+    if (customLevel && (game.mode === 'clear' || game.mode === 'gameover' || game.mode === 'win')) {
+      updateParticles();
+      updateToasts();
+      if (backEdge || escEdge) { returnToEditor(); }
+      else if (game.timer > 15 && (consumeConfirm() || tapPoint)) { restartCustom(); }
+      return;
+    }
 
     if (game.mode === 'dead') {
       updateParticles();
@@ -1828,6 +1898,8 @@
       toast(hint.off ? 'ARROWS OFF' : 'ARROWS ON', '#7ef0b0');
     }
 
+    NinjaHazards.tick(hazards, doBlast);
+    if (NinjaHazards.fall(hazards, level.grid, hitByBlock, crumbleBlock)) { hint.dirty = true; }
     updatePlayer();
     updateEnemies();
     updateShurikens();
@@ -1996,6 +2068,7 @@
   }
 
   function startLevel(idx) {
+    if (customLevel) { restartCustom(); return; }
     game.level = idx;
     game.world = worldOf(idx);
     game.score = 0;
@@ -2012,6 +2085,7 @@
   }
 
   function openShop() {
+    if (customLevel) { return; }
     menu.shop = 0;
     menu.msg = '';
     menu.msgT = 0;
@@ -3099,6 +3173,15 @@
       var gone = s.life <= 0 || hitWall || s.x < -30 || s.x > level.pxW + 30 ||
                  s.y < -40 || s.y > level.pxH + 40;
 
+      if (!gone) {
+        for (var bi = 0; bi < hazards.barrels.length; bi++) {
+          var barrel = hazards.barrels[bi];
+          if (barrel.spent || !overlap(s, barrel)) { continue; }
+          NinjaHazards.arm(barrel);
+          if (!s.pierce && !s.home) { gone = true; break; }
+        }
+      }
+
       if (gone) {
         if (s.blast > 0) { doBlast(s.x + s.w / 2, s.y + s.h / 2, s.blast, s.dmg); }
         else { burst(s.x + s.w / 2, s.y + s.h / 2, WEAPONS[s.wk] ? WEAPONS[s.wk].color : '#cfd8e8', 4, 1.6); }
@@ -3176,7 +3259,7 @@
         it.taken = true;
         var isNew = markGem(game.level, it.slot);
         game.score += isNew ? 50 : 10;
-        toast(isNew ? 'GEM ' + gemCount(game.level) + '/3' : 'GEM AGAIN', '#7ad8c8');
+        toast(customLevel ? 'TEST GEM' : isNew ? 'GEM ' + gemCount(game.level) + '/3' : 'GEM AGAIN', '#7ad8c8');
         Sound.power();
         burst(it.x + 5, it.y + 5, '#7ad8c8', 16, 3.4);
       }
@@ -3339,6 +3422,87 @@
     ctx.fillRect(0, baseY, VIEW_W, VIEW_H - baseY);
   }
 
+  function hitByBlock(box) {
+    var contact = false;
+    for (var i = 0; i < enemies.length; i++) {
+      var e = enemies[i];
+      if (e.alive && overlap(box, e)) { damageEnemy(e, 2, 'blast'); contact = true; }
+    }
+    if (!player.dying && overlap(box, player)) {
+      player.vy = Math.min(player.vy, -2.8);
+      contact = true;
+    }
+    return contact;
+  }
+
+  function crumbleBlock(b) {
+    hint.dirty = true;
+    burst(b.x + 8, b.y + 12, '#e7c68c', 10, 2.4);
+    Sound.dig();
+  }
+
+  function drawFallingBlock(x, y, warning, anchored, pen) {
+    pen = pen || ctx;
+    var shake = warning > 0 ? (Math.floor(warning / 4) % 3 - 1) : 0;
+    x += shake;
+    pen.fillStyle = '#05060d'; pen.fillRect(x, y, 16, 16);
+    pen.fillStyle = warning > 0 && Math.floor(warning / 8) % 2 === 0 ? '#fff3b0' : '#ac8d61';
+    pen.fillRect(x + 1, y + 1, 14, 14);
+    pen.fillStyle = '#e7c68c'; pen.fillRect(x + 1, y + 1, 14, 2);
+    pen.fillStyle = '#3e332f';
+    pen.fillRect(x + 7, y + 4, 2, 5);
+    pen.fillRect(x + 5, y + 7, 6, 2);
+    pen.fillRect(x + 6, y + 9, 4, 1);
+    pen.fillRect(x + 7, y + 10, 2, 1);
+    if (anchored) {
+      pen.fillStyle = '#e6e9e9';
+      pen.fillRect(x + 2, y + 12, 2, 2); pen.fillRect(x + 12, y + 12, 2, 2);
+    }
+    if (warning > 0) {
+      pen.fillStyle = '#ffd93d';
+      pen.fillRect(x + 2, y + 18, 2, 2); pen.fillRect(x + 12, y + 20, 2, 2);
+      pen.fillRect(x + 7, y - 6, 2, 3); pen.fillRect(x + 7, y - 2, 2, 1);
+    }
+  }
+
+  function drawBarrel(x, y, fuse, pen) {
+    pen = pen || ctx;
+    var flash = fuse >= 0 && Math.floor(fuse / 6) % 2 === 0;
+    pen.fillStyle = '#05060d';
+    pen.fillRect(x, y + 1, 12, 13);
+    pen.fillStyle = flash ? '#fff3b0' : '#c85836';
+    pen.fillRect(x + 1, y + 2, 10, 11);
+    pen.fillStyle = '#f39958';
+    pen.fillRect(x + 2, y + 2, 2, 10);
+    pen.fillStyle = '#d6c6a2';
+    pen.fillRect(x, y + 2, 12, 2);
+    pen.fillRect(x, y + 11, 12, 2);
+    pen.fillStyle = '#ffd93d';
+    pen.fillRect(x + 4, y + 5, 5, 5);
+    pen.fillStyle = '#291b21';
+    pen.fillRect(x + 6, y + 5, 1, 3);
+    pen.fillRect(x + 6, y + 9, 1, 1);
+    if (fuse >= 0) {
+      pen.fillStyle = '#ffd93d';
+      pen.fillRect(x + 5, y - 4, 2, 3);
+      pen.fillStyle = '#fff3b0';
+      pen.fillRect(x + 3, y - 3, 6, 1);
+    }
+  }
+
+  function drawHazards() {
+    hazards.barrels.forEach(function (b) {
+      if (!b.spent && b.x + b.w >= cam.x && b.x <= cam.x + VIEW_W &&
+          b.y + b.h >= cam.y && b.y <= cam.y + VIEW_H) { drawBarrel(b.x, b.y, b.fuse); }
+    });
+    hazards.blocks.forEach(function (b) {
+      if (b.phase !== 'spent' && b.x + 16 >= cam.x && b.x <= cam.x + VIEW_W &&
+          b.y + 22 >= cam.y && b.y <= cam.y + VIEW_H) {
+        drawFallingBlock(b.x, b.y, b.warning, b.anchored);
+      }
+    });
+  }
+
   function drawTiles() {
     var pal = level.pal;
     var c0 = Math.max(0, Math.floor(cam.x / TILE) - 1);
@@ -3348,7 +3512,7 @@
     for (var cy = r0; cy <= r1; cy++) {
       for (var cx = c0; cx <= c1; cx++) {
         var ch = level.grid[cy][cx];
-        if (ch === '.') { continue; }
+        if (ch === '.' || ch === 'v') { continue; }
         var x = cx * TILE, y = cy * TILE;
         if (ch === '#' || ch === '%') {
           /* A fake wall looks exactly the same as rock. You walk through it. */
@@ -3360,6 +3524,7 @@
             ctx.fillStyle = 'rgba(255,255,255,0.12)';
             ctx.fillRect(x, y, TILE, 1);
           }
+
           ctx.fillStyle = 'rgba(0,0,0,0.18)';
           ctx.fillRect(x, y + TILE - 2, TILE, 2);
           ctx.fillRect(x + TILE - 1, y, 1, TILE);
@@ -4116,7 +4281,7 @@
     ctx.fillRect(10, 23, 2, 3);
     text(String(game.score), 21, 26, 12, '#ffffff', 'left');
     var wname = WORLDS[worldOf(game.level)].name;
-    text(wname + '  ' + (worldOf(game.level) + 1) + '-' + (game.level - firstLevelOf(worldOf(game.level)) + 1) + '  ' + level.name,
+    text(customLevel ? 'TEST LEVEL: ' + level.name : wname + '  ' + (worldOf(game.level) + 1) + '-' + (game.level - firstLevelOf(worldOf(game.level)) + 1) + '  ' + level.name,
       VIEW_W / 2, 13, 10, 'rgba(255,255,255,0.75)');
 
     var bx = VIEW_W - 34;
@@ -4549,7 +4714,7 @@
     menuHits = [];
     text('PAUSED', 192, 51, 30, '#ffe19a');
     text('Your run is safe here.', 192, 78, 11, '#ffffff');
-    var labels = ['RESUME', 'RESTART LEVEL', 'WORLD MAP'];
+    var labels = ['RESUME', 'RESTART LEVEL', customLevel ? 'BACK TO EDITOR' : 'WORLD MAP'];
     for (var i = 0; i < labels.length; i++) {
       box(102, 98 + i * 36, 180, 30, menu.pause === i, false, '#d2bc7e');
       text(labels[i], 192, 113 + i * 36, 13, '#ffffff');
@@ -6536,6 +6701,7 @@
   }
 
   function render() {
+    if (game.mode === 'editor') { return; }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
@@ -6557,6 +6723,7 @@
     ctx.translate(-Math.round(cam.x) + sx, -Math.round(cam.y) + sy);
 
     drawTiles();
+    drawHazards();
     drawHint();
     drawFlag();
     drawCoins();
@@ -6604,12 +6771,13 @@
 
     if (game.mode === 'clear') {
       var lines = [
-        { t: 'LEVEL CLEAR', s: 30, c: '#ffd93d' },
+        { t: customLevel ? 'YOU MADE IT!' : 'LEVEL CLEAR', s: 30, c: '#ffd93d' },
         { t: 'Score ' + game.score + '    Coins ' + game.runCoins, s: 14 }
       ];
       if (game.wonMedals && game.wonMedals.length) {
         lines.push({ t: 'NEW MEDAL:  ' + game.wonMedals.join('  +  '), s: 13, c: '#7fd05f' });
       }
+      if (customLevel) { lines.push({ t: 'Edit level above, or tap to try again.', s: 12 }); }
       drawOverlayCentre(lines);
     } else if (game.mode === 'dead') {
       drawOverlayCentre([{ t: 'OUCH', s: 30, c: '#ff6b6b' }]);
@@ -6666,6 +6834,16 @@
     get weaponBoxes() { return weaponBoxes; },
     get hint() { return hint; },
     get shurikens() { return shurikens; },
+    get hazards() { return hazards; },
+    get customPlaying() { return !!customLevel; },
+    openEditor: openEditor,
+    closeEditor: closeEditor,
+    playCustom: playCustom,
+    restartCustom: restartCustom,
+    returnToEditor: returnToEditor,
+    editorPalette: function (world) { return PALETTES[WORLDS[world].pal]; },
+    drawBarrel: drawBarrel,
+    drawFallingBlock: drawFallingBlock,
     hintTrail: hintTrail,
     worlds: WORLDS,
     weapons: WEAPONS,
@@ -6675,14 +6853,16 @@
     /* Jump straight to a level. NINJA.goTo(5) is the first boss.
        You can also say NINJA.goTo(1, 2) for world 2, level 3. */
     goTo: function (a, b) {
+      if (customLevel) { return; }
       var n = (b === undefined) ? a : firstLevelOf(a) + b;
       n = clamp(n, 0, LEVELS.length - 1);
       unlockUpTo(n);
       startLevel(n);
     },
     giveWeapon: function (k) { takeWeapon(k); },
-    unlockAll: function () { progress.max = LEVELS.length - 1; saveProgress(); },
+    unlockAll: function () { if (!customLevel) { progress.max = LEVELS.length - 1; saveProgress(); } },
     wipeSave: function () {
+      if (customLevel) { return; }
       progress = { max: 0, best: 0, gems: {}, coins: 0, spentGems: 0, buys: {}, medals: {} };
       game.best = 0;
       saveProgress();
@@ -6697,7 +6877,7 @@
     totalGems: totalGems,
     totalMedals: totalMedals,
     medalsOf: medalsOf,
-    giveCoins: function (n) { progress.coins += n | 0; saveProgress(); },
+    giveCoins: function (n) { if (!customLevel) { progress.coins += n | 0; saveProgress(); } },
     freeze: function (i, f) { return freezeEnemy(enemies[i], f === undefined ? 330 : f); },
     openShop: openShop
   };

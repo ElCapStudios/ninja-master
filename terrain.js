@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
 
-  function solid(ch) { return '#=T/+'.indexOf(ch) >= 0; }
+  function solid(ch) { return '#=T/+v'.indexOf(ch) >= 0; }
 
   /* Keep the original footholds in mazes, and a two-tile-deep bedrock
      trench in runs. Digging can open routes, never remove a required jump. */
@@ -53,7 +53,18 @@
       !mask[y][x] && (grid[y][x] === '#' || grid[y][x] === '/');
   }
 
-  var api = { protection: protection, canBreak: canBreak };
+  function blastCells(grid, x, y, radius, visit) {
+    var c0 = Math.floor((x - radius) / 16), c1 = Math.floor((x + radius) / 16);
+    var r0 = Math.floor((y - radius) / 16), r1 = Math.floor((y + radius) / 16);
+    for (var cy = Math.max(0, r0); cy <= Math.min(grid.length - 1, r1); cy++) {
+      for (var cx = Math.max(0, c0); cx <= Math.min(grid[0].length - 1, c1); cx++) {
+        var dx = cx * 16 + 8 - x, dy = cy * 16 + 8 - y;
+        if (dx * dx + dy * dy <= (radius + 6) * (radius + 6)) { visit(cx, cy); }
+      }
+    }
+  }
+
+  var api = { protection: protection, canBreak: canBreak, blastCells: blastCells, solid: solid };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
   else { root.NinjaTerrain = api; }
 })(typeof window !== 'undefined' ? window : this);
