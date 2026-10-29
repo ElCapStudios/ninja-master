@@ -44,10 +44,42 @@ FORM: Extend the existing game with the requested region map and level trail.
     <button class="tiny" id="btn-editor">MAKE LEVEL</button>
     <button class="tiny" id="btn-pause" aria-label="Pause game" aria-pressed="false" hidden>PAUSE</button>
     <button class="tiny" id="btn-menu" aria-label="Open game menu">MENU</button>
+    <button class="tiny" id="btn-customizer" aria-haspopup="dialog" aria-controls="customizer">MY NINJA</button>
     <button class="tiny" id="btn-sound" aria-label="Toggle sound">SOUND ON</button>
     <button class="tiny" id="btn-full" aria-label="Toggle full screen">FULL SCREEN</button>
   </div>
 </div>
+
+<!-- The look picker keeps keyboard and touch input out of the game while open. -->
+<dialog id="customizer" aria-labelledby="customizer-title" aria-describedby="customizer-help">
+  <header class="customizer-header">
+    <h1 id="customizer-title">MY NINJA</h1>
+    <p id="customizer-help">Pick colours and headwear. Make this ninja yours.</p>
+  </header>
+  <div class="customizer-body">
+    <div class="customizer-preview">
+      <canvas id="customizer-preview" width="72" height="88" role="img" aria-label="Ninja preview"></canvas>
+      <div>
+        <p class="customizer-preview-title">YOUR LOOK</p>
+        <p id="customizer-gold-note"></p>
+      </div>
+    </div>
+    <div class="customizer-controls">
+      <fieldset><legend>Suit colour</legend><div class="customizer-options" id="customizer-suit"></div></fieldset>
+      <fieldset><legend>Headband colour</legend><div class="customizer-options" id="customizer-headband"></div></fieldset>
+      <fieldset><legend>Belt colour</legend><div class="customizer-options" id="customizer-belt"></div></fieldset>
+      <fieldset><legend>Headwear</legend><div class="customizer-options customizer-hats" id="customizer-headwear"></div></fieldset>
+    </div>
+  </div>
+  <footer class="customizer-footer">
+    <p id="customizer-status" role="status" aria-live="polite"></p>
+    <div class="customizer-actions">
+      <button type="button" id="customizer-default">Default look</button>
+      <button type="button" id="customizer-back">Back</button>
+      <button type="button" id="customizer-apply">Apply look</button>
+    </div>
+  </footer>
+</dialog>
 
 <!-- The maker keeps the game's dark world colors and gold marks.
      The grid is the main surface. Choose a tile, paint, then test it.
@@ -109,6 +141,7 @@ FORM: Extend the existing game with the requested region map and level trail.
 <script src="hazards.js"></script>
 <script src="level-rules.js"></script>
 <script src="level-data.js"></script>
+<script src="customizer.js"></script>
 <script src="game.js"></script>
 <script src="level-editor.js"></script>
 </body>

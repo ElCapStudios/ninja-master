@@ -56,7 +56,7 @@
 #editor-warning p { margin-top: 0; line-height: 1.5; }
 #custom-playbar { position: fixed; top: calc(6px + env(safe-area-inset-top)); left: calc(6px + env(safe-area-inset-left)); z-index: 6; display: flex; gap: 4px; }
 #custom-edit { color: #ffe19a; border-color: #d2bc7e; }
-body.custom-testing #topbar > :not(#btn-pause):not(#btn-menu) { display: none; }
+body.custom-testing #topbar > :not(#btn-pause):not(#btn-menu):not(#btn-customizer) { display: none; }
 @media (max-width: 520px) {
   #level-editor { padding-left: 12px; padding-right: 12px; }
   .editor-header h1 { font-size: 24px; }

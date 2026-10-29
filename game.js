@@ -177,7 +177,12 @@
   var KEY_DOWN = { ArrowDown: 1, KeyS: 1 };
 
   window.addEventListener('keydown', function (e) {
-    if (game.mode === 'editor') { return; }
+    if (game.mode === 'editor' || window.NinjaLooks.isOpen() ||
+        ((e.code === 'Enter' || e.code === 'Space') &&
+         ['btn-customizer', 'btn-editor', 'custom-retry', 'custom-edit',
+          'btn-pause', 'btn-menu', 'btn-sound', 'btn-full'].some(function (id) {
+            return e.target === document.getElementById(id);
+          }))) { return; }
     Sound.init();
     if (e.code === 'KeyP' || e.code === 'Escape') {
       e.preventDefault();
@@ -1646,7 +1651,7 @@
   /* ---------------- update ---------------- */
 
   function update() {
-    if (game.mode === 'editor') { return; }
+    if (game.mode === 'editor' || window.NinjaLooks.isOpen()) { return; }
     if (pauseEdge && (game.mode === 'play' || game.mode === 'paused')) {
       setPaused(game.mode === 'play');
       return;
@@ -1696,6 +1701,7 @@
     pauseBtn.textContent = game.mode === 'paused' ? 'RESUME' : 'PAUSE';
     pauseBtn.setAttribute('aria-label', game.mode === 'paused' ? 'Resume game' : 'Pause game');
     pauseBtn.setAttribute('aria-pressed', String(game.mode === 'paused'));
+    document.getElementById('btn-customizer').hidden = !isMenuMode();
     var editorBtn = document.getElementById('btn-editor');
     editorBtn.hidden = ['title', 'worlds', 'levels'].indexOf(game.mode) < 0;
     document.getElementById('custom-playbar').hidden = !customLevel;
@@ -3695,21 +3701,25 @@
 
   /* Draws a list of [x, y, w, h, colour] rectangles with a dark outline
      around the whole shape, so sprites stand out against the background. */
-  function drawSprite(parts) {
+  function drawSprite(parts, target) {
+    var c = target || ctx;
     var i, p;
-    ctx.fillStyle = '#05060d';
+    c.fillStyle = '#05060d';
     for (i = 0; i < parts.length; i++) {
       p = parts[i];
-      ctx.fillRect(p[0] - 1, p[1] - 1, p[2] + 2, p[3] + 2);
+      c.fillRect(p[0] - 1, p[1] - 1, p[2] + 2, p[3] + 2);
     }
     for (i = 0; i < parts.length; i++) {
       p = parts[i];
-      ctx.fillStyle = p[4];
-      ctx.fillRect(p[0], p[1], p[2], p[3]);
+      c.fillStyle = p[4];
+      c.fillRect(p[0], p[1], p[2], p[3]);
     }
   }
 
-  function drawNinja(p) {
+  function drawNinja(p, look, target) {
+    var c = target || ctx;
+    look = look || window.NinjaLooks.current();
+    var colors = window.NinjaLooks.palette(look);
     if (p.invuln > 0 && Math.floor(game.frame / 4) % 2 === 0) { return; }
     var dx = Math.round(p.x) - 1;
     var dy = Math.round(p.y) - 1;
@@ -3719,16 +3729,20 @@
     var airborne = !p.onGround;
     var tail = Math.round(Math.sin(game.frame * 0.25) * 1.5);
 
-    var SUIT = '#3b4570';
-    var SUIT_DARK = '#2a3155';
-    var SKIN = '#4f5c8c';
-    var RED = '#e8483a';
+    var SUIT = colors.suit;
+    var SUIT_DARK = colors.dark;
+    var SKIN = colors.hood;
+    var RED = colors.band;
+    var TAIL = colors.tail;
+    var BELT = colors.belt;
     /* GOLD NINJA from the shop. It only changes the colours. */
     if (has('gold')) {
       SUIT = '#d9a521';
       SUIT_DARK = '#9c7212';
       SKIN = '#f0cf6a';
       RED = '#fff3b0';
+      BELT = RED;
+      TAIL = '#b8352a';
     }
     if (p.starT > 0) {
       var RAINBOW = ['#ffd93d', '#ff6b6b', '#5ad2ff', '#a8ff5a'];
@@ -3737,12 +3751,13 @@
       SUIT_DARK = RAINBOW[(k + 1) % 4];
       RED = RAINBOW[(k + 2) % 4];
       SKIN = RAINBOW[(k + 3) % 4];
+      BELT = RED;
     }
     var parts = [];
 
     // scarf trailing behind
     parts.push([f > 0 ? dx - 3 : dx + 9, dy + 4 + tail, 5, 2, RED]);
-    parts.push([f > 0 ? dx - 5 : dx + 13, dy + 6 + tail, 3, 2, '#b8352a']);
+    parts.push([f > 0 ? dx - 5 : dx + 13, dy + 6 + tail, 3, 2, TAIL]);
 
     // legs
     if (airborne) {
@@ -3755,7 +3770,7 @@
 
     // body and belt
     parts.push([dx + 2, dy + 6, 8, 6, SUIT]);
-    parts.push([dx + 2, dy + 10, 8, 1, RED]);
+    parts.push([dx + 2, dy + 10, 8, 1, BELT]);
 
     // arms
     if (p.throwCd > 8) {
@@ -3776,15 +3791,17 @@
       parts.push([dx + 5, dy + 4, 2, 1, '#ffffff']);
     }
 
+    parts = parts.concat(window.NinjaLooks.headwear(look, dx, dy, SUIT, SUIT_DARK, RED));
+
     /* Draw around the feet without changing the collision box. */
     var sx = p.drawScaleX || 1, sy = p.drawScaleY || 1;
     var footX = dx + 6, footY = dy + 16;
-    ctx.save();
-    ctx.translate(footX, footY);
-    ctx.scale(sx, sy);
-    ctx.translate(-footX, -footY);
-    drawSprite(parts);
-    ctx.restore();
+    c.save();
+    c.translate(footX, footY);
+    c.scale(sx, sy);
+    c.translate(-footX, -footY);
+    drawSprite(parts, c);
+    c.restore();
   }
 
   function drawZombie(e) {
@@ -6866,8 +6883,25 @@
   };
 
   loadProgress();
+  window.NinjaLooks.init({
+    isGold: function () { return has('gold'); },
+    onOpen: function () {
+      if (game.mode === 'play') { setPaused(true); }
+      releaseControls();
+    },
+    onClose: releaseControls,
+    draw: function (c, look) {
+      c.save();
+      c.translate(24, 30);
+      c.scale(3, 3);
+      drawNinja({ x: 1, y: 1, vx: 0, facing: 1, onGround: true,
+        animT: 0, invuln: 0, throwCd: 0 }, look, c);
+      c.restore();
+    }
+  });
   game.best = progress.best;
   loadLevel(0);
   game.mode = 'title';
+  syncControls();
   requestAnimationFrame(frame);
 })();

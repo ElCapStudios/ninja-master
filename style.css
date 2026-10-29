@@ -121,6 +121,7 @@ button:focus-visible, a:focus-visible {
   display: flex;
   gap: 6px;
   z-index: 5;
+  max-width: calc(100% - 12px - env(safe-area-inset-left) - env(safe-area-inset-right));
 }
 
 .tiny {
@@ -184,4 +185,92 @@ body:not(.playing) #pad { display: none; }
   .pad-left  { left: calc(6px + env(safe-area-inset-left)); }
   .pad-right { right: calc(6px + env(safe-area-inset-right)); }
   .btn-down, .btn-dig { width: 44px; height: 44px; }
+}
+
+/* ---------- ninja look picker ---------- */
+
+#customizer {
+  width: min(720px, calc(100% - 24px));
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  margin: auto;
+  padding: 0 20px;
+  border: 2px solid #718094;
+  border-top: 4px solid #ffd93d;
+  background: #0c101e;
+  color: #f4f4ef;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  font-size: 15px;
+}
+
+#customizer::backdrop { background: rgba(4, 6, 14, 0.88); }
+#customizer * { touch-action: pan-y; }
+.customizer-header { padding: 18px 0 12px; }
+.customizer-header h1 { margin: 0 0 6px; color: #ffd93d; font-size: 26px; }
+.customizer-header p { margin: 0; color: #c1ccdc; line-height: 1.4; }
+.customizer-body { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 20px; }
+.customizer-preview { position: sticky; top: 0; align-self: start; padding: 12px 0; background: #0c101e; z-index: 1; }
+#customizer-preview { display: block; width: 144px; height: 176px; image-rendering: pixelated; margin: 0 auto; }
+.customizer-preview-title { margin: 8px 0; color: #ffd93d; font-weight: bold; }
+#customizer-gold-note { margin: 0; color: #c1ccdc; font-size: 14px; line-height: 1.4; }
+.customizer-controls fieldset { border: 0; margin: 0 0 16px; padding: 0; min-width: 0; }
+.customizer-controls legend { margin-bottom: 6px; padding: 0; font-size: 16px; font-weight: bold; }
+.customizer-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.customizer-hats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.customizer-choice {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 48px;
+  padding: 6px;
+  border: 1px solid #64748b;
+  background: #141c30;
+  cursor: pointer;
+  font-size: 14px;
+}
+.customizer-choice input { margin: 0; accent-color: #ffd93d; flex: 0 0 auto; }
+.customizer-swatch { width: 12px; height: 18px; border: 1px solid #c1ccdc; flex: 0 0 auto; }
+.customizer-choice:has(input:checked) { border-color: #ffd93d; background: #293044; }
+.customizer-choice:focus-within { outline: 3px solid #ffd93d; outline-offset: 2px; }
+.customizer-actions button:focus, #btn-customizer:focus { outline: 3px solid #ffd93d; outline-offset: 3px; }
+.customizer-choice:has(input:disabled) { color: #b7c0d0; cursor: not-allowed; border-style: dashed; }
+.customizer-footer { position: sticky; bottom: 0; padding: 10px 0 14px; background: #0c101e; z-index: 2; border-top: 1px solid #64748b; }
+#customizer-status { margin: 0 0 10px; min-height: 2.8em; color: #a8ddab; font-size: 14px; line-height: 1.4; }
+#customizer-status.customizer-warning { color: #ffd93d; }
+.customizer-actions { display: flex; gap: 8px; }
+.customizer-actions button {
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid #8494ac;
+  border-radius: 6px;
+  background: #1c2840;
+  color: #f4f4ef;
+  font: inherit;
+  cursor: pointer;
+}
+#customizer-apply { margin-left: auto; background: #ffd93d; border-color: #ffd93d; color: #141824; font-weight: bold; }
+.customizer-actions button:active { transform: translateY(1px); }
+@media (hover: hover) {
+  .customizer-choice:hover:not(:has(input:disabled)), .customizer-actions button:hover { border-color: #ffd93d; }
+}
+@media (max-width: 560px) {
+  #customizer { padding: 0 12px; }
+  .customizer-body { display: block; }
+  .customizer-preview { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+  #customizer-preview { width: 108px; height: 132px; margin: 0; flex: 0 0 auto; }
+  .customizer-preview-title { margin: 0 0 4px; }
+  .customizer-choice { gap: 4px; padding: 4px; font-size: 13px; }
+  .customizer-swatch { width: 8px; }
+  .customizer-actions button { padding: 8px; font-size: 14px; }
+}
+@media (max-width: 380px) {
+  .customizer-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-height: 420px) and (min-width: 561px) {
+  .customizer-header { padding: 8px 0; }
+  .customizer-header h1 { font-size: 20px; }
+  .customizer-preview { padding: 0; }
+  #customizer-preview { width: 108px; height: 132px; }
 }
